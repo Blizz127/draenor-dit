@@ -1,0 +1,728 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d54996d..14ffcfd 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -34,7 +34,7 @@ if( NOT CMAKE_BUILD_TYPE )
+ endif()
+ 
+ if( UNIX )
+-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
++    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
+ endif()
+ 
+ if ( WIN32 )
+diff --git a/cmake/compiler/clang/settings.cmake b/cmake/compiler/clang/settings.cmake
+index 7cfc1d8..de9bab6 100644
+--- a/cmake/compiler/clang/settings.cmake
++++ b/cmake/compiler/clang/settings.cmake
+@@ -4,8 +4,6 @@ add_definitions(-D_BUILD_DIRECTIVE='"$(CONFIGURATION)"')
+ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
+ message(STATUS "Clang: Enabled c++14 support")
+ 
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+-message(STATUS "Clang: Enabled c++11 support")
+ 
+ if(WITH_WARNINGS)
+   set(WARNING_FLAGS "-W -Wall -Wextra -Winit-self -Wfatal-errors -Wno-mismatched-tags -Wno-unknown-pragmas -Wno-conversion -Wno-sign-compare")
+@@ -25,5 +23,5 @@ endif()
+ 
+ # -Wno-narrowing needed to suppress a warning in g3d
+ # -Wno-deprecated-register is needed to suppress 185 gsoap warnings on Unix systems.
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wno-narrowing -Wno-deprecated-register")
++set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -Wno-narrowing -Wno-deprecated-register")
+ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG=1")
+diff --git a/cmake/compiler/gcc/settings.cmake b/cmake/compiler/gcc/settings.cmake
+index 36c6a65..7e59961 100644
+--- a/cmake/compiler/gcc/settings.cmake
++++ b/cmake/compiler/gcc/settings.cmake
+@@ -10,8 +10,6 @@ endif()
+ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
+ message(STATUS "GCC: Enabled c++14 support")
+ 
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+-message(STATUS "GCC: Enabled c++11 support")
+ 
+ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
+ message(STATUS "GCC: Enabled C99 support")
+diff --git a/cmake/macros/FindOpenSSL.cmake b/cmake/macros/FindOpenSSL.cmake
+index 54e0297..998c311 100644
+--- a/cmake/macros/FindOpenSSL.cmake
++++ b/cmake/macros/FindOpenSSL.cmake
+@@ -194,6 +194,23 @@ if (OPENSSL_INCLUDE_DIR)
+     file(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h" openssl_version_str
+          REGEX "^# *define[\t ]+OPENSSL_VERSION_NUMBER[\t ]+0x[0-9][0-9][0-9][0-9][0-9][0-9].*")
+ 
++    # OpenSSL 3.x defines OPENSSL_VERSION_NUMBER as a multi-line computed macro,
++    # so the single-line regex above matches nothing. Guard against the empty
++    # match (which would make the list(GET ...) calls below fail configure) and
++    # fall back to the discrete OPENSSL_VERSION_* macros introduced in 3.x.
++    if(NOT openssl_version_str)
++      file(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h" openssl_version_major_str
++           REGEX "^# *define[\t ]+OPENSSL_VERSION_MAJOR[\t ]+[0-9]+.*")
++      file(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h" openssl_version_minor_str
++           REGEX "^# *define[\t ]+OPENSSL_VERSION_MINOR[\t ]+[0-9]+.*")
++      file(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h" openssl_version_patch_str
++           REGEX "^# *define[\t ]+OPENSSL_VERSION_PATCH[\t ]+[0-9]+.*")
++      string(REGEX REPLACE ".*OPENSSL_VERSION_MAJOR[\t ]+([0-9]+).*" "\\1" OPENSSL_VERSION_MAJOR "${openssl_version_major_str}")
++      string(REGEX REPLACE ".*OPENSSL_VERSION_MINOR[\t ]+([0-9]+).*" "\\1" OPENSSL_VERSION_MINOR "${openssl_version_minor_str}")
++      string(REGEX REPLACE ".*OPENSSL_VERSION_PATCH[\t ]+([0-9]+).*" "\\1" OPENSSL_VERSION_FIX "${openssl_version_patch_str}")
++      set(OPENSSL_VERSION "${OPENSSL_VERSION_MAJOR}.${OPENSSL_VERSION_MINOR}.${OPENSSL_VERSION_FIX}")
++    else()
++
+     # The version number is encoded as 0xMNNFFPPS: major minor fix patch status
+     # The status gives if this is a developer or prerelease and is ignored here.
+     # Major, minor, and fix directly translate into the version numbers shown in
+@@ -221,6 +238,7 @@ if (OPENSSL_INCLUDE_DIR)
+     endif (NOT OPENSSL_VERSION_PATCH STREQUAL "00")
+ 
+     set(OPENSSL_VERSION "${OPENSSL_VERSION_MAJOR}.${OPENSSL_VERSION_MINOR}.${OPENSSL_VERSION_FIX}${OPENSSL_VERSION_PATCH_STRING}")
++    endif()
+   endif (_OPENSSL_VERSION)
+ 
+ endif (OPENSSL_INCLUDE_DIR)
+diff --git a/dep/boost/boost/preprocessor/debug/assert.hpp b/dep/boost/boost/preprocessor/debug/assert.hpp
+new file mode 100644
+index 0000000..3380c70
+--- /dev/null
++++ b/dep/boost/boost/preprocessor/debug/assert.hpp
+@@ -0,0 +1,44 @@
++# /* Copyright (C) 2001
++#  * Housemarque Oy
++#  * http://www.housemarque.com
++#  *
++#  * Distributed under the Boost Software License, Version 1.0. (See
++#  * accompanying file LICENSE_1_0.txt or copy at
++#  * http://www.boost.org/LICENSE_1_0.txt)
++#  */
++#
++# /* Revised by Paul Mensonides (2002) */
++#
++# /* See http://www.boost.org for most recent version. */
++#
++# ifndef BOOST_PREPROCESSOR_DEBUG_ASSERT_HPP
++# define BOOST_PREPROCESSOR_DEBUG_ASSERT_HPP
++#
++# include <boost/preprocessor/config/config.hpp>
++# include <boost/preprocessor/control/expr_iif.hpp>
++# include <boost/preprocessor/control/iif.hpp>
++# include <boost/preprocessor/logical/not.hpp>
++# include <boost/preprocessor/tuple/eat.hpp>
++#
++# /* BOOST_PP_ASSERT */
++#
++# if ~BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_EDG()
++#    define BOOST_PP_ASSERT BOOST_PP_ASSERT_D
++# else
++#    define BOOST_PP_ASSERT(cond) BOOST_PP_ASSERT_D(cond)
++# endif
++#
++# define BOOST_PP_ASSERT_D(cond) BOOST_PP_IIF(BOOST_PP_NOT(cond), BOOST_PP_ASSERT_ERROR, BOOST_PP_TUPLE_EAT_1)(...)
++# define BOOST_PP_ASSERT_ERROR(x, y, z)
++#
++# /* BOOST_PP_ASSERT_MSG */
++#
++# if ~BOOST_PP_CONFIG_FLAGS() & BOOST_PP_CONFIG_EDG()
++#    define BOOST_PP_ASSERT_MSG BOOST_PP_ASSERT_MSG_D
++# else
++#    define BOOST_PP_ASSERT_MSG(cond, msg) BOOST_PP_ASSERT_MSG_D(cond, msg)
++# endif
++#
++# define BOOST_PP_ASSERT_MSG_D(cond, msg) BOOST_PP_EXPR_IIF(BOOST_PP_NOT(cond), msg)
++#
++# endif
+diff --git a/dep/boost/boost/preprocessor/debug/error.hpp b/dep/boost/boost/preprocessor/debug/error.hpp
+new file mode 100644
+index 0000000..c8ae5e7
+--- /dev/null
++++ b/dep/boost/boost/preprocessor/debug/error.hpp
+@@ -0,0 +1,33 @@
++# /* **************************************************************************
++#  *                                                                          *
++#  *     (C) Copyright Paul Mensonides 2002.
++#  *     Distributed under the Boost Software License, Version 1.0. (See
++#  *     accompanying file LICENSE_1_0.txt or copy at
++#  *     http://www.boost.org/LICENSE_1_0.txt)
++#  *                                                                          *
++#  ************************************************************************** */
++#
++# /* See http://www.boost.org for most recent version. */
++#
++# ifndef BOOST_PREPROCESSOR_DEBUG_ERROR_HPP
++# define BOOST_PREPROCESSOR_DEBUG_ERROR_HPP
++#
++# include <boost/preprocessor/cat.hpp>
++# include <boost/preprocessor/config/config.hpp>
++#
++# /* BOOST_PP_ERROR */
++#
++# if BOOST_PP_CONFIG_ERRORS
++#    define BOOST_PP_ERROR(code) BOOST_PP_CAT(BOOST_PP_ERROR_, code)
++# endif
++#
++# define BOOST_PP_ERROR_0x0000 BOOST_PP_ERROR(0x0000, BOOST_PP_INDEX_OUT_OF_BOUNDS)
++# define BOOST_PP_ERROR_0x0001 BOOST_PP_ERROR(0x0001, BOOST_PP_WHILE_OVERFLOW)
++# define BOOST_PP_ERROR_0x0002 BOOST_PP_ERROR(0x0002, BOOST_PP_FOR_OVERFLOW)
++# define BOOST_PP_ERROR_0x0003 BOOST_PP_ERROR(0x0003, BOOST_PP_REPEAT_OVERFLOW)
++# define BOOST_PP_ERROR_0x0004 BOOST_PP_ERROR(0x0004, BOOST_PP_LIST_FOLD_OVERFLOW)
++# define BOOST_PP_ERROR_0x0005 BOOST_PP_ERROR(0x0005, BOOST_PP_SEQ_FOLD_OVERFLOW)
++# define BOOST_PP_ERROR_0x0006 BOOST_PP_ERROR(0x0006, BOOST_PP_ARITHMETIC_OVERFLOW)
++# define BOOST_PP_ERROR_0x0007 BOOST_PP_ERROR(0x0007, BOOST_PP_DIVISION_BY_ZERO)
++#
++# endif
+diff --git a/dep/boost/boost/preprocessor/debug/line.hpp b/dep/boost/boost/preprocessor/debug/line.hpp
+new file mode 100644
+index 0000000..4dd1013
+--- /dev/null
++++ b/dep/boost/boost/preprocessor/debug/line.hpp
+@@ -0,0 +1,35 @@
++# /* **************************************************************************
++#  *                                                                          *
++#  *     (C) Copyright Paul Mensonides 2002.
++#  *     Distributed under the Boost Software License, Version 1.0. (See
++#  *     accompanying file LICENSE_1_0.txt or copy at
++#  *     http://www.boost.org/LICENSE_1_0.txt)
++#  *                                                                          *
++#  ************************************************************************** */
++#
++# /* See http://www.boost.org for most recent version. */
++#
++# ifndef BOOST_PREPROCESSOR_DEBUG_LINE_HPP
++# define BOOST_PREPROCESSOR_DEBUG_LINE_HPP
++#
++# include <boost/preprocessor/cat.hpp>
++# include <boost/preprocessor/config/config.hpp>
++# include <boost/preprocessor/iteration/iterate.hpp>
++# include <boost/preprocessor/stringize.hpp>
++#
++# /* BOOST_PP_LINE */
++#
++# if BOOST_PP_CONFIG_EXTENDED_LINE_INFO
++#    define BOOST_PP_LINE(line, file) line BOOST_PP_CAT(BOOST_PP_LINE_, BOOST_PP_IS_ITERATING)(file)
++#    define BOOST_PP_LINE_BOOST_PP_IS_ITERATING(file) #file
++#    define BOOST_PP_LINE_1(file) BOOST_PP_STRINGIZE(file BOOST_PP_CAT(BOOST_PP_LINE_I_, BOOST_PP_ITERATION_DEPTH())())
++#    define BOOST_PP_LINE_I_1() [BOOST_PP_FRAME_ITERATION(1)]
++#    define BOOST_PP_LINE_I_2() BOOST_PP_LINE_I_1()[BOOST_PP_FRAME_ITERATION(2)]
++#    define BOOST_PP_LINE_I_3() BOOST_PP_LINE_I_2()[BOOST_PP_FRAME_ITERATION(3)]
++#    define BOOST_PP_LINE_I_4() BOOST_PP_LINE_I_3()[BOOST_PP_FRAME_ITERATION(4)]
++#    define BOOST_PP_LINE_I_5() BOOST_PP_LINE_I_4()[BOOST_PP_FRAME_ITERATION(5)]
++# else
++#    define BOOST_PP_LINE(line, file) line __FILE__
++# endif
++#
++# endif
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index 35e64e3..8f93850 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -70,6 +70,8 @@
+ #include "PetBattle.h"
+ #include "MSCallback.hpp"
+ #include "Vignette.hpp"
++#include "AreaTrigger.h"
++#include "Conversation.hpp"
+ #include "WowTime.hpp"
+ 
+ #ifndef CROSS
+@@ -27970,6 +27972,8 @@ template void Player::UpdateVisibilityOf(Creature*      target, UpdateData& data
+ template void Player::UpdateVisibilityOf(Corpse*        target, UpdateData& data, std::set<Unit*>& visibleNow);
+ template void Player::UpdateVisibilityOf(GameObject*    target, UpdateData& data, std::set<Unit*>& visibleNow);
+ template void Player::UpdateVisibilityOf(DynamicObject* target, UpdateData& data, std::set<Unit*>& visibleNow);
++template void Player::UpdateVisibilityOf(AreaTrigger*   target, UpdateData& data, std::set<Unit*>& visibleNow);
++template void Player::UpdateVisibilityOf(Conversation*  target, UpdateData& data, std::set<Unit*>& visibleNow);
+ 
+ void Player::UpdateVisibilityForPlayer()
+ {
+diff --git a/src/server/game/Entities/Unit/Unit.cpp b/src/server/game/Entities/Unit/Unit.cpp
+index b468d53..453c208 100644
+--- a/src/server/game/Entities/Unit/Unit.cpp
++++ b/src/server/game/Entities/Unit/Unit.cpp
+@@ -165,6 +165,7 @@ _hitMask(hitMask), _spell(spell), _damageInfo(damageInfo), _healInfo(healInfo)
+ #pragma warning(disable:4355)
+ #endif
+ Unit::Unit(bool isWorldObject): WorldObject(isWorldObject)
++    , m_cloudStacks(0)
+     , m_movedPlayer(NULL)
+     , m_lastSanctuaryTime(0)
+     , m_TempSpeed(0.0f)
+@@ -20330,6 +20331,34 @@ public:
+     }
+ };
+ 
++// Delayed spell cast scheduled onto a unit's EventProcessor. The victim is
++// stored by GUID and resolved at execution time so it is safe if the victim
++// despawns before the delay elapses. The event lives on the caster's own
++// EventProcessor, so a despawning caster tears the pending cast down with it.
++class Unit::DelayedCastEvent : public BasicEvent
++{
++    Unit& m_caster;
++    uint64 m_victimGUID;
++    uint32 m_spellId;
++    bool m_triggered;
++public:
++    DelayedCastEvent(Unit* caster, uint64 victimGUID, uint32 spellId, bool triggered)
++        : BasicEvent(), m_caster(*caster), m_victimGUID(victimGUID), m_spellId(spellId), m_triggered(triggered) {}
++
++    virtual bool Execute(uint64 /*e_time*/, uint32 /*p_time*/)
++    {
++        if (Unit* victim = ObjectAccessor::GetUnit(m_caster, m_victimGUID))
++            m_caster.CastSpell(victim, m_spellId, m_triggered);
++        return true;
++    }
++};
++
++void Unit::CastWithDelay(uint32 delay, Unit* victim, uint32 spellId, bool triggered)
++{
++    uint64 victimGUID = victim ? victim->GetGUID() : 0;
++    m_Events.AddEvent(new DelayedCastEvent(this, victimGUID, spellId, triggered), m_Events.CalculateTime(delay));
++}
++
+ void Unit::UpdateObjectVisibility(bool forced)
+ {
+     if (forced)
+diff --git a/src/server/game/Entities/Unit/Unit.h b/src/server/game/Entities/Unit/Unit.h
+index a7ccf48..cbb18e5 100644
+--- a/src/server/game/Entities/Unit/Unit.h
++++ b/src/server/game/Entities/Unit/Unit.h
+@@ -1926,6 +1926,15 @@ class Unit : public WorldObject
+         void CastSpell(GameObject* go, uint32 spellId, bool triggered, Item* castItem = NULL, AuraEffect* triggeredByAura = nullptr, uint64 originalCaster = 0);
+         void CastSpell(Item* p_ItemTarget, uint32 p_SpellID, bool p_Triggered, Item* p_CastItem = nullptr, AuraEffect* p_TriggeredByAura = nullptr, uint64 p_OriginalCaster = 0);
+ 
++        // Schedules a CastSpell(victim, spellId, triggered) to run after 'delay' ms
++        // via this unit's event processor. The victim is resolved by GUID at
++        // execution time so a despawn before the delay elapses is handled safely.
++        void CastWithDelay(uint32 delay, Unit* victim, uint32 spellId, bool triggered = false);
++
++        // Referenced by a generic login spell effect; not wired to any gameplay
++        // mechanic, kept as a plain counter so the reference compiles and resets.
++        uint32 m_cloudStacks;
++
+         void CastCustomSpell(Unit* Victim, uint32 spellId, int32 const* bp0, int32 const* bp1, int32 const* bp2, bool triggered, Item* castItem= NULL, AuraEffect const* triggeredByAura = nullptr, uint64 originalCaster = 0);
+         void CastCustomSpell(Unit* Victim, uint32 spellId, int32 const* bp0, int32 const* bp1, int32 const* bp2, int32 const* bp3, int32 const* bp4, int32 const* bp5, bool triggered, Item* castItem= NULL, AuraEffect const* triggeredByAura = nullptr, uint64 originalCaster = 0);
+         void CastCustomSpell(uint32 spellId, SpellValueMod mod, int32 value, Unit* Victim = NULL, bool triggered = true, Item* castItem = NULL, AuraEffect const* triggeredByAura = nullptr, uint64 originalCaster = 0);
+@@ -2944,6 +2953,7 @@ class Unit : public WorldObject
+     private:
+         class AINotifyTask;
+         class VisibilityUpdateTask;
++        class DelayedCastEvent;
+         Position m_lastVisibilityUpdPos;
+         bool m_VisibilityUpdScheduled;
+         uint32 m_rootTimes;
+diff --git a/src/server/game/Server/Protocol/Opcodes.h b/src/server/game/Server/Protocol/Opcodes.h
+index 5254a90..d2b6684 100644
+--- a/src/server/game/Server/Protocol/Opcodes.h
++++ b/src/server/game/Server/Protocol/Opcodes.h
+@@ -35,15 +35,12 @@ enum Opcodes
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Protocol
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamProtocol
+         /// Opcodes
+         SMSG_AUTH_CHALLENGE                         = 0x0307, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Dispatch
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamDispatch
+         /// Base opcodes
+         SMSG_AUTH_RESPONSE                          = 0x1357, ///< 6.2.3 20726
+         SMSG_CACHE_VERSION                          = 0x1747, ///< 6.2.3 20726
+@@ -553,12 +550,10 @@ enum Opcodes
+         /// AreaTriggers
+         SMSG_AREA_TRIGGER_RE_SHAPE                              = 0x127B, ///< 6.2.3 20726
+         SMSG_AREA_TRIGGER_RE_PATH                               = 0x065C, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Guild
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamGuild
+         /// Petition
+         SMSG_PETITION_RENAME                        = 0x141F, ///< 6.2.3 20726
+ 
+@@ -633,12 +628,10 @@ enum Opcodes
+         SMSG_GUILD_EVENT_TAB_TEXT_CHANGED           = 0x1558, ///< 6.2.3 20726
+         SMSG_GUILD_EVENT_BANK_CONTENTS_CHANGED      = 0x1554, ///< 6.2.3 20726
+         SMSG_GUILD_EVENT_BANK_MONEY_CHANGED         = 0x1418, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Chat
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamChat
+         /// Voice chat
+         SMSG_VOICE_SESSION_ROSTER_UPDATE            = 0x0000, ///< (unused)
+         SMSG_VOICE_SESSION_LEAVE                    = 0x0000, ///< (unused)
+@@ -676,12 +669,10 @@ enum Opcodes
+         SMSG_USERLIST_ADD                           = 0x0B8D, ///< 6.2.3 20726
+         SMSG_USERLIST_REMOVE                        = 0x0A8A, ///< 6.2.3 20726
+         SMSG_USERLIST_UPDATE                        = 0x0289, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Move
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamMove
+         /// Move speeds
+         SMSG_MOVE_SET_RUN_SPEED                     = 0x04FD, ///< 6.2.3 20726
+         SMSG_MOVE_SET_RUN_BACK_SPEED                = 0x0875, ///< 6.2.3 20726
+@@ -763,12 +754,10 @@ enum Opcodes
+         SMSG_SPLINE_MOVE_SET_FLYING                 = 0x0475, ///< 6.2.3 20726
+         SMSG_SPLINE_MOVE_UNSET_FLYING               = 0x057E, ///< 6.2.3 20726
+         SMSG_FLIGHT_SPLINE_SYNC                     = 0x09E1, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Spell
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamSpell
+         /// Aura
+         SMSG_AURA_POINTS_DEPLETED                   = 0x0000, ///< (unused)
+         SMSG_AURA_UPDATE                            = 0x10AF, ///< 6.2.3 20726
+@@ -858,12 +847,10 @@ enum Opcodes
+         SMSG_CANCEL_SPELL_VISUAL                    = 0x1440, ///< 6.2.3 20726
+         SMSG_PLAY_SPELL_VISUAL_KIT                  = 0x00F3, ///< 6.2.3 20726
+         SMSG_CANCEL_SPELL_VISUAL_KIT                = 0x0167, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Quest
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamQuest
+         /// Quest log
+         SMSG_QUERY_QUEST_INFO_RESPONSE              = 0x15AD, ///< 6.2.3 20726
+         SMSG_QUEST_UPDATE_FAILED_TIMER              = 0x1989, ///< 6.2.3 20726
+@@ -895,12 +882,10 @@ enum Opcodes
+         /// Gossip
+         SMSG_GOSSIP_MESSAGE                         = 0x0351, ///< 6.2.3 20726
+         SMSG_GOSSIP_COMPLETE                        = 0x15A2, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Lfg
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamLFG
+         /// LFG
+         SMSG_LFG_BOOT_PLAYER                              = 0x100F, ///< 6.2.3 20726
+         SMSG_LFG_DISABLED                                 = 0x108B, ///< 6.2.3 20726
+@@ -933,12 +918,10 @@ enum Opcodes
+         SMSG_LFG_LIST_APPLY_FOR_GROUP_RESULT              = 0x1143, ///< 6.2.3 20726
+         SMSG_LFG_LIST_APPLICANT_LIST_UPDATE               = 0x1108, ///< 6.2.3 20726
+         SMSG_LFG_LIST_APPLICANT_GROUP_INVITE              = 0x105F, ///< 6.2.3 20726
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     /// Jam Client Garrison
+     //////////////////////////////////////////////////////////////////////////
+-    #pragma region JamGarrison
+         SMSG_GET_GARRISON_INFO_RESULT                                   = 0x1196, ///< 6.2.3 20779
+         SMSG_GARRISON_PLOT_PLACED                                       = 0x1191, ///< 6.2.3 20779
+         SMSG_GARRISON_PLOT_REMOVED                                      = 0x1C16, ///< 6.2.3 20779
+@@ -975,7 +958,6 @@ enum Opcodes
+         SMSG_GARRISON_OPEN_TRADESKILL_NPC                               = 0x141E, ///< 6.2.3 20779
+         SMSG_GARRISON_SET_MISSION_NPC                                   = 0x159A, ///< 6.2.3 20779
+         SMSG_GARRISON_FOLLOWER_DELETE_NOTIFY                            = 0x18B5, ///< 6.2.3 20779
+-    #pragma endregion
+ 
+     //////////////////////////////////////////////////////////////////////////
+     //////////////////////////////////////////////////////////////////////////
+diff --git a/src/server/scripts/Draenor/gorgrond.cpp b/src/server/scripts/Draenor/gorgrond.cpp
+index 47f1336..ef8814b 100644
+--- a/src/server/scripts/Draenor/gorgrond.cpp
++++ b/src/server/scripts/Draenor/gorgrond.cpp
+@@ -7,7 +7,7 @@
+ ////////////////////////////////////////////////////////////////////////////////
+ 
+ 
+-#include "Gorgrond.hpp"
++#include "gorgrond.hpp"
+ 
+ #include "ScriptPCH.h"
+ #include "ScriptedEscortAI.h"
+diff --git a/src/server/scripts/Draenor/tanaan_jungle_100.cpp b/src/server/scripts/Draenor/tanaan_jungle_100.cpp
+index 8bf88cc..2bbfd8d 100644
+--- a/src/server/scripts/Draenor/tanaan_jungle_100.cpp
++++ b/src/server/scripts/Draenor/tanaan_jungle_100.cpp
+@@ -29,7 +29,7 @@
+ #include "Unit.h"
+ #include "Vehicle.h"
+ #include "ZoneScript.h"
+-#include "Tanaan_jungle_100.h"
++#include "tanaan_jungle_100.h"
+ #include "Common.h"
+ #include "GuardAI.h"
+ 
+diff --git a/src/server/scripts/EasternKingdoms/CMakeLists.txt b/src/server/scripts/EasternKingdoms/CMakeLists.txt
+index 5715f5b..f6ad42c 100644
+--- a/src/server/scripts/EasternKingdoms/CMakeLists.txt
++++ b/src/server/scripts/EasternKingdoms/CMakeLists.txt
+@@ -189,7 +189,7 @@ set(scripts_STAT_SRCS
+   EasternKingdoms/Gilneas/Gilneas_city_part1.cpp
+   EasternKingdoms/Gilneas/Gilneas_city_part2.cpp
+   EasternKingdoms/Gilneas/Gilneas_city_part3.cpp
+-  EasternKingdoms/Gilneas/Gilneas.h
++  EasternKingdoms/Gilneas/gilneas.h
+   EasternKingdoms/ThroneOfTheTides/boss_lady_nazjar.cpp
+   EasternKingdoms/ThroneOfTheTides/boss_commander_ulthok.cpp
+   EasternKingdoms/ThroneOfTheTides/boss_mindebender_ghursha.cpp
+diff --git a/src/server/scripts/EasternKingdoms/Gilneas/Duskhaven.cpp b/src/server/scripts/EasternKingdoms/Gilneas/Duskhaven.cpp
+index ddb4346..7f08901 100644
+--- a/src/server/scripts/EasternKingdoms/Gilneas/Duskhaven.cpp
++++ b/src/server/scripts/EasternKingdoms/Gilneas/Duskhaven.cpp
+@@ -33,7 +33,7 @@
+ #include "TemporarySummon.h"
+ #include "Vehicle.h"
+ #include "WorldSession.h"
+-#include "Gilneas.h"
++#include "gilneas.h"
+ 
+ enum eDuskHaven
+ {
+diff --git a/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part2.cpp b/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part2.cpp
+index 2e495ae..f5760dd 100644
+--- a/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part2.cpp
++++ b/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part2.cpp
+@@ -44,7 +44,7 @@
+ //#include "TemporarySummon.h"
+ //#include "Vehicle.h"
+ //#include "WorldSession.h"
+-//#include "Gilneas.h"
++//#include "gilneas.h"
+ //
+ //enum eZoneGilneasCity2
+ //{
+diff --git a/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part3.cpp b/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part3.cpp
+index 0081374..af79a72 100644
+--- a/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part3.cpp
++++ b/src/server/scripts/EasternKingdoms/Gilneas/Gilneas_city_part3.cpp
+@@ -34,7 +34,7 @@
+ #include "ObjectMgr.h"
+ #include "ScriptMgr.h"
+ #include "SpellScript.h"
+-#include "Gilneas.h"
++#include "gilneas.h"
+ 
+ enum eBattleForGilneas
+ {
+diff --git a/src/server/scripts/EasternKingdoms/stormwind_city.cpp b/src/server/scripts/EasternKingdoms/stormwind_city.cpp
+index 98c2aab..9950ba1 100644
+--- a/src/server/scripts/EasternKingdoms/stormwind_city.cpp
++++ b/src/server/scripts/EasternKingdoms/stormwind_city.cpp
+@@ -122,7 +122,7 @@ public:
+ 			if (owner->GetTypeId() != TYPEID_PLAYER)
+ 				return;
+ 
+-			me->SetSeerGUID(owner->GetGUID());
++			owner->ToPlayer()->SetSeer(me);
+ 			playerOwner = owner;
+ 			events.ScheduleEvent(EVENT_CHECK_AREA_BEFORE_FOLLOW, 2000);
+ 			events.ScheduleEvent(EVENT_CHECK_FOR_MOUNT, 1000);
+diff --git a/src/server/shared/Cryptography/ARC4.cpp b/src/server/shared/Cryptography/ARC4.cpp
+index d0823b9..9c48016 100644
+--- a/src/server/shared/Cryptography/ARC4.cpp
++++ b/src/server/shared/Cryptography/ARC4.cpp
+@@ -9,34 +9,34 @@
+ #include "ARC4.h"
+ #include <openssl/sha.h>
+ 
+-ARC4::ARC4(uint8 len) : m_ctx()
++// OpenSSL 3.x made EVP_CIPHER_CTX opaque: it can no longer be stack-allocated
++// or _init/_cleanup'd in place, and must be heap-managed via _new()/_free().
++ARC4::ARC4(uint8 len) : m_ctx(EVP_CIPHER_CTX_new())
+ {
+-    EVP_CIPHER_CTX_init(&m_ctx);
+-    EVP_EncryptInit_ex(&m_ctx, EVP_rc4(), NULL, NULL, NULL);
+-    EVP_CIPHER_CTX_set_key_length(&m_ctx, len);
++    EVP_EncryptInit_ex(m_ctx, EVP_rc4(), NULL, NULL, NULL);
++    EVP_CIPHER_CTX_set_key_length(m_ctx, len);
+ }
+ 
+-ARC4::ARC4(uint8 *seed, uint8 len) : m_ctx()
++ARC4::ARC4(uint8 *seed, uint8 len) : m_ctx(EVP_CIPHER_CTX_new())
+ {
+-    EVP_CIPHER_CTX_init(&m_ctx);
+-    EVP_EncryptInit_ex(&m_ctx, EVP_rc4(), NULL, NULL, NULL);
+-    EVP_CIPHER_CTX_set_key_length(&m_ctx, len);
+-    EVP_EncryptInit_ex(&m_ctx, NULL, NULL, seed, NULL);
++    EVP_EncryptInit_ex(m_ctx, EVP_rc4(), NULL, NULL, NULL);
++    EVP_CIPHER_CTX_set_key_length(m_ctx, len);
++    EVP_EncryptInit_ex(m_ctx, NULL, NULL, seed, NULL);
+ }
+ 
+ ARC4::~ARC4()
+ {
+-    EVP_CIPHER_CTX_cleanup(&m_ctx);
++    EVP_CIPHER_CTX_free(m_ctx);
+ }
+ 
+ void ARC4::Init(uint8 *seed)
+ {
+-    EVP_EncryptInit_ex(&m_ctx, NULL, NULL, seed, NULL);
++    EVP_EncryptInit_ex(m_ctx, NULL, NULL, seed, NULL);
+ }
+ 
+ void ARC4::UpdateData(int len, uint8 *data)
+ {
+     int outlen = 0;
+-    EVP_EncryptUpdate(&m_ctx, data, &outlen, data, len);
+-    EVP_EncryptFinal_ex(&m_ctx, data, &outlen);
++    EVP_EncryptUpdate(m_ctx, data, &outlen, data, len);
++    EVP_EncryptFinal_ex(m_ctx, data, &outlen);
+ }
+diff --git a/src/server/shared/Cryptography/ARC4.h b/src/server/shared/Cryptography/ARC4.h
+index f2da6a1..9883c38 100644
+--- a/src/server/shared/Cryptography/ARC4.h
++++ b/src/server/shared/Cryptography/ARC4.h
+@@ -21,7 +21,7 @@ class ARC4
+         void Init(uint8 *seed);
+         void UpdateData(int len, uint8 *data);
+     private:
+-        EVP_CIPHER_CTX m_ctx;
++        EVP_CIPHER_CTX *m_ctx;
+ };
+ 
+ #endif
+diff --git a/src/server/shared/Cryptography/HMACSHA1.cpp b/src/server/shared/Cryptography/HMACSHA1.cpp
+index 5ed185e..cc3d2b8 100644
+--- a/src/server/shared/Cryptography/HMACSHA1.cpp
++++ b/src/server/shared/Cryptography/HMACSHA1.cpp
+@@ -14,35 +14,35 @@
+ 
+ HmacHash::HmacHash(uint32 len, uint8 *seed)
+ {
+-    HMAC_CTX_init(&m_ctx);
+-    HMAC_Init_ex(&m_ctx, seed, len, EVP_sha1(), NULL);
++    m_ctx = HMAC_CTX_new();
++    HMAC_Init_ex(m_ctx, seed, len, EVP_sha1(), NULL);
+ }
+ 
+ HmacHash::~HmacHash()
+ {
+-    HMAC_CTX_cleanup(&m_ctx);
++    HMAC_CTX_free(m_ctx);
+ }
+ 
+ void HmacHash::UpdateData(const std::string &str)
+ {
+-    HMAC_Update(&m_ctx, (uint8 const*)str.c_str(), str.length());
++    HMAC_Update(m_ctx, (uint8 const*)str.c_str(), str.length());
+ }
+ 
+ void HmacHash::UpdateData(const uint8* data, size_t len)
+ {
+-    HMAC_Update(&m_ctx, data, len);
++    HMAC_Update(m_ctx, data, len);
+ }
+ 
+ void HmacHash::Finalize()
+ {
+     uint32 length = 0;
+-    HMAC_Final(&m_ctx, (uint8*)m_digest, &length);
++    HMAC_Final(m_ctx, (uint8*)m_digest, &length);
+     ASSERT(length == SHA_DIGEST_LENGTH);
+ }
+ 
+ uint8 *HmacHash::ComputeHash(BigNumber* bn)
+ {
+-    HMAC_Update(&m_ctx, bn->AsByteArray(), bn->GetNumBytes());
++    HMAC_Update(m_ctx, bn->AsByteArray(), bn->GetNumBytes());
+     Finalize();
+     return (uint8*)m_digest;
+ }
+@@ -51,42 +51,42 @@ uint8 *HmacHash::ComputeHash(BigNumber* bn)
+ 
+ HmacHash256::HmacHash256(uint32 len, uint8 *seed)
+ {
+-    HMAC_CTX_init(&m_ctx);
+-    HMAC_Init_ex(&m_ctx, seed, len, EVP_sha256(), NULL);
++    m_ctx = HMAC_CTX_new();
++    HMAC_Init_ex(m_ctx, seed, len, EVP_sha256(), NULL);
+ }
+ 
+ HmacHash256::~HmacHash256()
+ {
+-    HMAC_CTX_cleanup(&m_ctx);
++    HMAC_CTX_free(m_ctx);
+ }
+ 
+ void HmacHash256::UpdateData(const std::string &str)
+ {
+-    HMAC_Update(&m_ctx, (uint8 const*)str.c_str(), str.length());
++    HMAC_Update(m_ctx, (uint8 const*)str.c_str(), str.length());
+ }
+ 
+ void HmacHash256::UpdateData(const uint8* data, size_t len)
+ {
+-    HMAC_Update(&m_ctx, data, len);
++    HMAC_Update(m_ctx, data, len);
+ }
+ 
+ void HmacHash256::Finalize()
+ {
+     uint32 length = 0;
+-    HMAC_Final(&m_ctx, (uint8*)m_digest, &length);
++    HMAC_Final(m_ctx, (uint8*)m_digest, &length);
+     ASSERT(length == SHA256_DIGEST_LENGTH);
+ }
+ 
+ uint8 *HmacHash256::ComputeHash(BigNumber* bn)
+ {
+-    HMAC_Update(&m_ctx, bn->AsByteArray(), bn->GetNumBytes());
++    HMAC_Update(m_ctx, bn->AsByteArray(), bn->GetNumBytes());
+     Finalize();
+     return (uint8*)m_digest;
+ }
+ 
+ uint8 *HmacHash256::ComputeHash(uint8 *seed, uint32 len)
+ {
+-    HMAC_Update(&m_ctx, seed, len);
++    HMAC_Update(m_ctx, seed, len);
+     Finalize();
+     return (uint8*)m_digest;
+ }
+diff --git a/src/server/shared/Cryptography/HMACSHA1.h b/src/server/shared/Cryptography/HMACSHA1.h
+index 8a4af9c..0fc2eda 100644
+--- a/src/server/shared/Cryptography/HMACSHA1.h
++++ b/src/server/shared/Cryptography/HMACSHA1.h
+@@ -30,7 +30,7 @@ class HmacHash
+         uint8 *GetDigest() { return (uint8*)m_digest; }
+         int GetLength() const { return SHA_DIGEST_LENGTH; }
+     private:
+-        HMAC_CTX m_ctx;
++        HMAC_CTX *m_ctx;
+         uint8 m_digest[SHA_DIGEST_LENGTH];
+ };
+ 
+@@ -51,7 +51,7 @@ class HmacHash256
+         return SHA256_DIGEST_LENGTH;
+     }
+     private:
+-    HMAC_CTX m_ctx;
++    HMAC_CTX *m_ctx;
+     uint8 m_digest[SHA256_DIGEST_LENGTH];
+ };
+ 
+diff --git a/src/server/shared/Database/Field.h b/src/server/shared/Database/Field.h
+index 4b77ec7..ec3b7dd 100644
+--- a/src/server/shared/Database/Field.h
++++ b/src/server/shared/Database/Field.h
+@@ -14,6 +14,19 @@
+ 
+ #include <mysql.h>
+ 
++// MySQL Connector/C 8.0+ removed the historical my_bool typedef; the Database
++// layer still uses it (e.g. PreparedResultSet::m_isNull). Shim it back.
++#if !defined(MARIADB_BASE_VERSION) && !defined(MARIADB_VERSION_ID) && \
++    defined(LIBMYSQL_VERSION_ID) && LIBMYSQL_VERSION_ID >= 80000
++typedef bool my_bool;
++#endif
++
++// MySQL's errmsg.h and WoW's CombatRating enum both define CR_UNUSED_1.
++// Drop MySQL's macro so the enum value survives.
++#ifdef CR_UNUSED_1
++#undef CR_UNUSED_1
++#endif
++
+ /// |   MySQL type           |  method to use                         |
+ /// |------------------------|----------------------------------------|
+ /// | TINYINT                | GetBool, GetInt8, GetUInt8             |

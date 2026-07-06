@@ -10,17 +10,24 @@ so a fresh clone does not build cleanly on current Linux. The fixes needed to ge
 building are catalogued in **[BUILD.md](BUILD.md)**, grouped by root cause so the same
 patterns can be recognized and fixed if they recur deeper in the build.
 
-## Status
+## Status (verified 2026-07-06, upstream `940e0fb`)
 
-- Configures and compiles cleanly through **~36%** of the full build.
-- Zero unresolved compile errors up to that point.
-- `shared`, `game`, `collision`, and `authserver` all link successfully.
-- Remaining work is deep in `src/server/scripts` (world-content scripts); no known
-  blockers ahead beyond possibly more of the same two bug categories (see
-  [BUILD.md](BUILD.md), "Genuine content/API bugs").
+- ✅ **Builds to 100%** on GCC 13.3 / OpenSSL 3.0.13 / ACE 7.1.2 / Boost 1.83 / MySQL 8.0.46.
+- ✅ Both binaries produced: `authserver` (677 KB) and `worldserver` (74 MB); both run.
+- ✅ `authserver` **fully operational** — listens on `0.0.0.0:1119`, realm registered,
+  test account created.
+- ⚠️ `worldserver` builds and starts but can't reach a playable state without the
+  world/characters DB import and extracted client data (see the report).
+- The complete fix set is in **`draenor-core-build-fixes.patch`** (23 files).
 
-## Quick start
+## Documents
 
-See **[BUILD.md](BUILD.md)** for the full prerequisites, configure/compile commands,
-and the important gotchas (notably: **leave precompiled headers enabled** — do not pass
-`-DNOPCH=1`).
+- **[BUILD.md](BUILD.md)** — prerequisites, exact configure/compile commands, and the full
+  fix catalogue (12 categories). Notably: **leave PCH enabled** (do not pass `-DNOPCH=1`)
+  and use `-j2` on low-RAM boxes.
+- **[PHASE1-REPORT.md](PHASE1-REPORT.md)** — build & runtime baseline report: versions,
+  binaries, what works, what's blocked, top 5 blockers, and whether it's ready for
+  bot/population work (not yet).
+- **`draenor-core-build-fixes.patch`** — apply against a fresh `--depth 1` clone.
+- **`runtime/`** — reconstructed `auth` schema (scaffold, see report caveats) and an
+  example config.

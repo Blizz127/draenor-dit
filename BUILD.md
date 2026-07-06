@@ -4,6 +4,12 @@ Notes for getting [`EyalMK/Draenor-Core`](https://github.com/EyalMK/Draenor-Core
 (WoD 6.2.3, build 20779) configuring and compiling on GCC 13 / OpenSSL 3.x /
 ACE 7.1.2 / Boost 1.83. Written against a fresh `--depth 1` clone.
 
+> **Verified 2026-07-06** against upstream `940e0fb`: the patch in this repo
+> (`draenor-core-build-fixes.patch`, 23 files) takes a fresh clone to a **clean 100%
+> build**; both `authserver` and `worldserver` binaries are produced and run. Runtime
+> baseline and blockers are in [PHASE1-REPORT.md](PHASE1-REPORT.md). Fixes #10–#12 below
+> are new (the prior sandbox stopped ~36% and never reached them).
+
 ## Prerequisites
 
 ### System packages
@@ -121,6 +127,26 @@ version mismatch is a non-issue).
 - **Missing `#include`s** for symbols otherwise reachable via `ScriptPCH.h` under a
   normal (non-`NOPCH`) build. Left the includes in place anyway — harmless, and they
   make the files self-sufficient.
+
+### 10 & 11. More case-sensitive includes (new — deeper than the handoff reached)
+
+Same class as #7, in the Draenor scripts:
+
+- `src/server/scripts/Draenor/tanaan_jungle_100.cpp`: `#include "Tanaan_jungle_100.h"`
+  → `tanaan_jungle_100.h`
+- `src/server/scripts/Draenor/gorgrond.cpp`: `#include "Gorgrond.hpp"` → `gorgrond.hpp`
+
+A full scan of `src/server/scripts` for case-mismatched `#include` targets (`.h` **and**
+`.hpp`) found only these two beyond Gilneas.
+
+### 12. Missing explicit template instantiations (new — worldserver link error)
+
+`worldserver` failed to link with `undefined reference to
+Player::UpdateVisibilityOf<AreaTrigger>` and `<Conversation>`. `Player::UpdateVisibilityOf<T>`
+is explicitly instantiated in `Player.cpp` for `Player`, `Creature`, `Corpse`, `GameObject`,
+`DynamicObject` — but not the two newer entity types that `Map.cpp`'s visibility visitor
+iterates. Fixed by adding the two instantiations (and `#include "AreaTrigger.h"` /
+`"Conversation.hpp"` so the types are complete at instantiation).
 
 ## Open items and risk areas
 
