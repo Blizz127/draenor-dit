@@ -1,9 +1,104 @@
-# HANDOFF — Draenor-Core Bazzite: LOGIN WORKS, world handshake is the last blocker
+# HANDOFF — Draenor-Core Bazzite: IN-WORLD; last blocker = character can't move
 
-**Updated 2026-07-06 ~23:40.** See the "SESSION 2" section immediately below for the
-current state (bnet2 **login now works end-to-end**; the client authenticates and
-connects to the worldserver, but the world-socket handshake is rejected). The original
-Session-1 notes follow after it, unchanged, for history.
+**Updated 2026-07-07 ~09:30.** See "SESSION 3" immediately below for the live state.
+Short version: **everything works through character-in-world with rendering** — bnet2
+login, world handshake, world auth, character create, and 3D rendering all confirmed.
+The **one open issue is that the character can't move** (UI/menu input works; in-world
+movement produces zero client→server packets). Diagnosis narrowed to client-side input
+under Wine/Wayland vs a 20726↔20779 movement-opcode difference — a discriminator test was
+pending at reboot. SESSION 2 (world handshake) and SESSION 1 (build/login) follow, for history.
+
+---
+
+## SESSION 3 (2026-07-07) — IN-WORLD; movement is the last blocker
+
+### Resolved since Session 2
+- **World-socket handshake** (Session 2's blocker) was a **stale `WorldSocket.cpp.o`** — the
+  21:28 rebuild didn't recompile it, so it shipped the packed-header handshake. A clean
+  rebuild (00:46) fixed it: the server now sends the correct plain `30 00 57 4f` handshake.
+  Verified end-to-end: real client does handshake → `SMSG_AUTH_CHALLENGE` → `CMSG_AUTH_SESSION`
+  → `SMSG_AUTH_RESPONSE` → character select → **enters world** → **renders the 3D world**.
+- **Cutscene crash**: the Pandaren/Draenei intro cinematic crashes the client (ERROR #132
+  ACCESS_VIOLATION in d3d11.dll/DXVK, on the RTX 5070 Ti laptop GPU). Worked around by
+  skipping intros (`SkipCinematics = 2` in worldserver.conf + the char's `cinematic` flag =1).
+  Note: the shipped `SkipCinematics` config is NOT honored by
+  `src/server/game/Handlers/CharacterHandler.cpp:1150` (it only checks `!getCinematic()`);
+  future chars rely on the per-char DB flag or a code patch to skip the intro. With the intro
+  skipped the client no longer crashes and renders the world fine.
+
+### Account + character (current)
+- **Account** id 5: `blizz@blizz127.com` / `xenon127`, GM level 3 (was admin@admin.com).
+  The bnet2 SRP6a verifier + legacy sha were recomputed in Python (algorithm validated to
+  reproduce the server's exact hashes — see the method in-session; N/g in
+  `src/server/shared/Cryptography/SRP6a.h`, verifier steps in `AccountMgr.cpp`).
+- **Character** guid 1: `Blizz` (Pandaren Monk, neutral). Was renamed from Blizy.
+  Teleported to **Stormwind (map 0)** via `.tele name Blizz Stormwind` (console) to rule out
+  the Wandering Isle intro — but it **still can't move there**, so the blocker is NOT the
+  starting-zone intro. The user also has a **Draenei** char with the same lock (systemic).
+
+### THE OPEN BLOCKER — character can't move (all chars, all maps)
+Confirmed facts:
+- Client renders the world at ~114% CPU and RECEIVES server world updates (server→client
+  bytes grow). But holding W for 8s produced **ZERO client→server bytes** (stuck at 32462) —
+  no movement/input packets are sent at all.
+- **UI input works**: ESC opens the in-game menu, menu clicks work. So window-message input
+  reaches the client; only in-world movement/camera is dead.
+- **gamescope did NOT fix it** (`runtime/launch-client-gamescope.sh` wraps umu-run; input
+  capture + fullscreen work but movement still dead). Session is **Wayland** (WoW via XWayland).
+- **Server-side control IS granted**: `Player::SetMover(this)` runs on entering the world and
+  sends `SMSG_MOVE_SET_ACTIVE_MOVER` (Player.cpp:33109); the full
+  `SendInitialPacketsAfterAddToMap` sequence (time-sync, auras, login effect) runs. The
+  control opcodes are defined + registered (`SMSG_MOVE_SET_ACTIVE_MOVER=0x0175`,
+  `SMSG_CLIENT_CONTROL_UPDATE=0x07D0`, both in Opcodes.cpp). Not among the NULL_OPCODEs.
+- `Prevented sending of NULL_OPCODE to [Player: Blizz]` appears (WorldSession.cpp:321) for a
+  FEW opcodes not defined for this build — identify which (they were not confirmed to be
+  control/movement-critical).
+
+**Two hypotheses, discriminator was pending at reboot** (log in as Blizz in Stormwind, then:
+(1) left-click a guard — does it target? (2) right-drag — does the camera rotate?):
+- **Targets/camera rotate → server issue**: input reaches the game but movement is rejected,
+  likely a **build 20726 vs 20779 opcode shuffle** on movement/time-sync packets (Opcodes.h is
+  commented "20726"; the client is 20779; WoD-era builds sometimes shuffle opcodes). Would
+  need to diff the movement/`TIME_SYNC`/`MOVE_SET_ACTIVE_MOVER` opcode values for 20779.
+- **Neither works in-world → client input**: WoW in-world input (DirectInput/raw) not
+  delivered under Wine/Wayland while menu (window-message) input works. Client-side fix
+  (Wine input settings / Proton version / X11 session instead of Wayland).
+
+### Environment / runtime (all VOLATILE across the reboot the user is about to do)
+- Server side runs in the **rootless `draenor-devbox`** container (passwordless sudo there).
+  Container shares the host network namespace, so 127.0.0.1 is common to host + container.
+- Host `/etc/hosts` has `logon.fstorm.cc logon-cdn.fstorm.cc us-cdn.fstorm.cc eu-cdn.fstorm.cc`
+  → 127.0.0.1 (persists across reboot). The unprivileged-port floor (`sysctl
+  net.ipv4.ip_unprivileged_port_start=80`) does NOT persist — re-run the sudo setup.
+- The rootless container CANNOT bind :80/:87 (no real host privilege), so the NGDP server +
+  socat must run on the **host** after the port floor is lowered.
+
+### AFTER-REBOOT RESTART (exact order)
+```
+# 1. host sudo once: /etc/hosts (idempotent) + lower port floor
+sudo bash /var/home/blizz/Projects/draenor-dit/runtime/setup-client-connect.sh
+# 2. bring up MariaDB + auth + world (container) + NGDP :80 + socat :87 (host)
+bash /var/home/blizz/Projects/draenor-dit/runtime/start-all.sh
+# 3. launch the client (gamescope wrapper; or plain umu-run)
+bash /var/home/blizz/Projects/draenor-dit/runtime/launch-client-gamescope.sh
+# login blizz@blizz127.com / xenon127, enter world as Blizz (in Stormwind)
+```
+
+### worldserver.conf changes made this session (in /usr/local/etc/firestorm/, NOT the repo)
+`LogPackets = 0` (was 1 — per-packet printf was stalling the server; a real perf bug to keep
+off), `StrictPlayerNames = 0` (was 3 — disables the "mature language" name rejection),
+`SkipCinematics = 2`, `Logger.Root=0,3` (was 0,5 then 0,2), `Logger.Opcodes=41,6` (was 41,2).
+
+### In-container source changes NOT yet in a repo patch to fold in
+- `src/server/game/Server/WorldSocket.cpp` has DEBUG instrumentation (raw pre-auth header dump
+  + relaxed size cap) — captured at `runtime/worldsocket-dbg-instrumentation.patch`. REMOVE it
+  and rebuild for a clean server (it logs at Error on every pre-auth header).
+- The ARC4 OpenSSL-3 fix is `runtime/arc4-openssl3-fix.patch` (committed earlier).
+
+### Repo helpers added this session
+`runtime/start-all.sh` (full-stack bring-up), `runtime/launch-client-gamescope.sh`,
+`runtime/setup-client-connect.sh` (sudo: hosts + port floor), `runtime/start-ngdp.sh`,
+`runtime/ngdp/` (serve.py + versions/cdns + firestorm-real reference).
 
 ---
 

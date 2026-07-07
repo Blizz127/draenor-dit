@@ -1,0 +1,30 @@
+diff --git a/src/server/game/Server/WorldSocket.cpp b/src/server/game/Server/WorldSocket.cpp
+index b0ed5b4..f869d06 100644
+--- a/src/server/game/Server/WorldSocket.cpp
++++ b/src/server/game/Server/WorldSocket.cpp
+@@ -528,9 +528,14 @@ int WorldSocket::handle_input_header (void)
+     {
+         ACE_ASSERT(m_Header.length() == sizeof(AuthClientPktHeader));
+         uint8* uintHeader = (uint8*)m_Header.rd_ptr();
++
++        // Debug: dump raw pre-auth header bytes
++        sLog->outError(LOG_FILTER_NETWORKIO, "DBG pre-auth header raw bytes: %02X %02X %02X %02X %02X %02X",
++            uintHeader[0], uintHeader[1], uintHeader[2], uintHeader[3], uintHeader[4], uintHeader[5]);
++
+         AuthClientPktHeader& header = *((AuthClientPktHeader*)uintHeader);
+ 
+-        if ((header.size < 4) || (header.size > 10240))
++        if ((header.size < 4) || (header.size > 65535))
+         {
+             Player* _player = m_Session ? m_Session->GetPlayer() : NULL;
+             sLog->outError(LOG_FILTER_NETWORKIO, "WorldSocket::handle_input_header(): client (account: %u, char [GUID: %u, name: %s]) sent malformed packet (size: %d, cmd: %d)",
+@@ -543,6 +548,9 @@ int WorldSocket::handle_input_header (void)
+             return -1;
+         }
+ 
++        sLog->outError(LOG_FILTER_NETWORKIO, "DBG pre-auth decoded: size=%u cmd=0x%04X (%u)",
++            header.size, (uint16)header.cmd, (uint16)header.cmd);
++
+         header.size -= 4;
+ 
+         ACE_NEW_RETURN(m_RecvWPct, WorldPacket(PacketFilter::DropHighBytes(header.cmd), header.size), -1);
