@@ -1,0 +1,106 @@
+diff --git a/src/server/shared/Cryptography/ARC4.cpp b/src/server/shared/Cryptography/ARC4.cpp
+index d0823b9..86995e3 100644
+--- a/src/server/shared/Cryptography/ARC4.cpp
++++ b/src/server/shared/Cryptography/ARC4.cpp
+@@ -7,36 +7,56 @@
+ ////////////////////////////////////////////////////////////////////////////////
+ 
+ #include "ARC4.h"
+-#include <openssl/sha.h>
+ 
+-ARC4::ARC4(uint8 len) : m_ctx()
++ARC4::ARC4(uint8 len) : m_x(0), m_y(0), m_len(len), m_keyed(false)
+ {
+-    EVP_CIPHER_CTX_init(&m_ctx);
+-    EVP_EncryptInit_ex(&m_ctx, EVP_rc4(), NULL, NULL, NULL);
+-    EVP_CIPHER_CTX_set_key_length(&m_ctx, len);
++    for (int i = 0; i < 256; ++i)
++        m_state[i] = uint8(i);
+ }
+ 
+-ARC4::ARC4(uint8 *seed, uint8 len) : m_ctx()
++ARC4::ARC4(uint8 *seed, uint8 len) : m_x(0), m_y(0), m_len(len), m_keyed(false)
+ {
+-    EVP_CIPHER_CTX_init(&m_ctx);
+-    EVP_EncryptInit_ex(&m_ctx, EVP_rc4(), NULL, NULL, NULL);
+-    EVP_CIPHER_CTX_set_key_length(&m_ctx, len);
+-    EVP_EncryptInit_ex(&m_ctx, NULL, NULL, seed, NULL);
++    Init(seed);
+ }
+ 
+ ARC4::~ARC4()
+ {
+-    EVP_CIPHER_CTX_cleanup(&m_ctx);
+ }
+ 
+ void ARC4::Init(uint8 *seed)
+ {
+-    EVP_EncryptInit_ex(&m_ctx, NULL, NULL, seed, NULL);
++    // RC4 key-scheduling algorithm with the key length fixed at construction
++    // (matches the old EVP_CIPHER_CTX_set_key_length + EVP_EncryptInit_ex pair).
++    for (int i = 0; i < 256; ++i)
++        m_state[i] = uint8(i);
++
++    uint8 j = 0;
++    for (int i = 0; i < 256; ++i)
++    {
++        j = uint8(j + m_state[i] + seed[i % m_len]);
++        uint8 tmp = m_state[i];
++        m_state[i] = m_state[j];
++        m_state[j] = tmp;
++    }
++
++    m_x = 0;
++    m_y = 0;
++    m_keyed = true;
+ }
+ 
+ void ARC4::UpdateData(int len, uint8 *data)
+ {
+-    int outlen = 0;
+-    EVP_EncryptUpdate(&m_ctx, data, &outlen, data, len);
+-    EVP_EncryptFinal_ex(&m_ctx, data, &outlen);
++    // Callers (BNet2Crypt, AuthCrypt, Warden) only stream data after Init.
++    if (!m_keyed)
++        return;
++
++    for (int n = 0; n < len; ++n)
++    {
++        m_x = uint8(m_x + 1);
++        m_y = uint8(m_y + m_state[m_x]);
++        uint8 tmp = m_state[m_x];
++        m_state[m_x] = m_state[m_y];
++        m_state[m_y] = tmp;
++        data[n] ^= m_state[uint8(m_state[m_x] + m_state[m_y])];
++    }
+ }
+diff --git a/src/server/shared/Cryptography/ARC4.h b/src/server/shared/Cryptography/ARC4.h
+index f2da6a1..467f986 100644
+--- a/src/server/shared/Cryptography/ARC4.h
++++ b/src/server/shared/Cryptography/ARC4.h
+@@ -10,8 +10,11 @@
+ #define _AUTH_SARC4_H
+ 
+ #include "Define.h"
+-#include <openssl/evp.h>
+ 
++// Self-contained RC4. OpenSSL 3.x moved RC4 into the non-default "legacy"
++// provider, so the previous EVP_rc4()-based implementation segfaulted at
++// runtime (NULL cipher deref inside libcrypto) on every session setup.
++// The wire protocol mandates RC4, so implement it directly.
+ class ARC4
+ {
+     public:
+@@ -21,7 +24,11 @@ class ARC4
+         void Init(uint8 *seed);
+         void UpdateData(int len, uint8 *data);
+     private:
+-        EVP_CIPHER_CTX m_ctx;
++        uint8 m_state[256];
++        uint8 m_x;
++        uint8 m_y;
++        uint8 m_len;
++        bool m_keyed;
+ };
+ 
+ #endif
