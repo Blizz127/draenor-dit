@@ -1,0 +1,20 @@
+# Large / local-only assets — never commit these.
+# (gitignore has no inline comments; keep patterns on their own lines.)
+
+# the 29GB WoD 6.2.3 client (build 20779)
+wod/
+
+# 701MB DB-source tree (canonical Firestorm dumps)
+WOPCore-6.2.3-FirestormWOD/
+
+# 404MB imported SQL dumps
+runtime/db/
+
+# volatile runtime logs / captures
+runtime/ngdp/http.log
+runtime/ngdp/socat.log
+runtime/ngdp/world-dump.log
+
+# editor / stray
+.vscode/
+1119
