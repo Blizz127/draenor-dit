@@ -1,33 +1,41 @@
 # draenor-dit
 
-Build tracking and fix documentation for getting
-[`EyalMK/Draenor-Core`](https://github.com/EyalMK/Draenor-Core) (World of Warcraft:
-Warlords of Draenor, patch 6.2.3, build 20779) to configure and compile on a modern
-Linux toolchain — GCC 13 / OpenSSL 3.x / ACE 7.1.2 / Boost 1.83.
+This repository tracks a World of Warcraft: Warlords of Draenor 6.2.3.20779
+preservation baseline for Draenor-Core.
 
-The upstream project targets an older Windows/Visual Studio + OpenSSL 1.x era toolchain,
-so a fresh clone does not build cleanly on current Linux. The fixes needed to get it
-building are catalogued in **[BUILD.md](BUILD.md)**, grouped by root cause so the same
-patterns can be recognized and fixed if they recur deeper in the build.
+The current goal is to make the project reproducible enough to build, boot,
+connect a real 6.2.3.20779 client, login, create or select a character, enter
+world, render, move normally, and document every compatibility fix needed along
+the way.
 
-## Status (verified 2026-07-06, upstream `940e0fb`)
+This is not a custom gameplay branch. Bots, DIT population systems, garrisons,
+custom gameplay, and living-world simulation are explicitly out of scope until
+the preservation baseline is proven and documented.
 
-- ✅ **Builds to 100%** on GCC 13.3 / OpenSSL 3.0.13 / ACE 7.1.2 / Boost 1.83 / MySQL 8.0.46.
-- ✅ Both binaries produced: `authserver` (677 KB) and `worldserver` (74 MB); both run.
-- ✅ `authserver` **fully operational** — listens on `0.0.0.0:1119`, realm registered,
-  test account created.
-- ⚠️ `worldserver` builds and starts but can't reach a playable state without the
-  world/characters DB import and extracted client data (see the report).
-- The complete fix set is in **`draenor-core-build-fixes.patch`** (23 files).
+## Current Status
 
-## Documents
+- Client target: WoD 6.2.3.20779.
+- Build succeeds on the current local Linux/container toolchain.
+- `authserver` starts and listens on `1119`.
+- `worldserver` starts and reaches `World initialized` when launched with a
+  stable foreground or managed session.
+- The client can login, create/select a character, enter world, and render.
+- Movement is currently broken.
+- The client sends packets during movement attempts, so input is not treated as
+  dead.
+- Current working hypothesis: a mixed 20726/20779 movement opcode table.
 
-- **[BUILD.md](BUILD.md)** — prerequisites, exact configure/compile commands, and the full
-  fix catalogue (12 categories). Notably: **leave PCH enabled** (do not pass `-DNOPCH=1`)
-  and use `-j2` on low-RAM boxes.
-- **[PHASE1-REPORT.md](PHASE1-REPORT.md)** — build & runtime baseline report: versions,
-  binaries, what works, what's blocked, top 5 blockers, and whether it's ready for
-  bot/population work (not yet).
-- **`draenor-core-build-fixes.patch`** — apply against a fresh `--depth 1` clone.
-- **`runtime/`** — reconstructed `auth` schema (scaffold, see report caveats) and an
-  example config.
+Do not patch movement opcodes until action-correlated evidence exists.
+
+## Documentation
+
+- [docs/PRESERVATION_PLAN.md](docs/PRESERVATION_PLAN.md) - phased preservation
+  plan from reproducible build through the later DIT layer.
+- [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md) - current proven state,
+  known unknown opcodes, and active movement hypothesis.
+- [docs/TEST_MATRIX_MOVEMENT_20779.md](docs/TEST_MATRIX_MOVEMENT_20779.md) -
+  controlled movement test matrix for build 20779.
+- [docs/RUNTIME_NOTES.md](docs/RUNTIME_NOTES.md) - local runtime topology,
+  ports, client patching notes, and process-management warnings.
+- [BUILD.md](BUILD.md) - historical build notes and toolchain fixes.
+- [PHASE1-REPORT.md](PHASE1-REPORT.md) - earlier build/runtime baseline report.
