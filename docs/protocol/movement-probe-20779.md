@@ -1147,3 +1147,251 @@ movement traffic after control grant; it just reports unchanged coordinates.
 3. If login and teleport-ack sequences diverge in ways 20779 expects, test a
    logging-only post-login `UpdateSpeed`/`SMSG_MOVE_UPDATE` discriminator without
    committing behavioral changes until evidence supports it.
+
+## Phase 3H Initial Object Update vs Teleport-Ack Movement State
+
+Date: 2026-07-08
+
+Purpose: trace whether the player’s initial `SMSG_UPDATE_OBJECT` create/movement
+block is malformed or missing movement prerequisites, and whether the teleport-ack
+path emits movement/speed state that first login does not.
+
+Scope: static analysis plus existing logs. No C++ changes. No behavioral fixes.
+
+### Repository Inventory
+
+Docs repo (`draenor-dit`):
+
+| Item | Value |
+|---|---|
+| HEAD | `6b8fc6a` `Record server movement prerequisites audit` |
+| Working tree | clean |
+
+Core repo (`/home/blizz/Draenor-Core`):
+
+| Item | Value |
+|---|---|
+| HEAD | `3441c31` `Add 20779 movement handler trace` |
+| Working tree | dirty (unrelated build/script/runtime/probe changes preserved; not modified for Phase 3H) |
+
+Phase 3G commit `6b8fc6a` confirmed present in docs repo.
+
+### Login Initial Object / Update Path Inspected
+
+Character login sequence (`CharacterHandler.cpp:1147-1206`):
+
+```text
+SendInitialPacketsBeforeAddToMap()
+  → SetMover(this)
+AddPlayerToMap()
+  → player->AddToWorld()
+  → Map::SendInitSelf(player)
+SendInitialPacketsAfterAddToMap()
+  → ResetTimeSync(), SendTimeSync(), spell 836, SetClientControl(this, true) [local]
+```
+
+`Map::SendInitSelf` (`Map.cpp:2435-2467`):
+
+1. Optional transport create block if player is on transport.
+2. `p_Player->BuildCreateUpdateBlockForPlayer(&l_Data, p_Player)` on first map add.
+3. Builds one `SMSG_UPDATE_OBJECT` packet via `UpdateData::BuildPacket`.
+
+Player create builder chain:
+
+| Step | Function | File |
+|---|---|---|
+| Equipment/items | `Player::BuildCreateUpdateBlockForPlayer` | `Player.cpp:6444-6465` |
+| Unit movement + values | `Unit::BuildCreateUpdateBlockForPlayer` → `Object::BuildCreateUpdateBlockForPlayer` | `Object.cpp:200-268` |
+| Movement block | `Object::BuildMovementUpdate` | `Object.cpp:321-608+` |
+| Update fields | `Object::BuildValuesUpdate` | `Object.cpp:844+` |
+
+Unit default update flags (`Unit.cpp:197`):
+
+```cpp
+m_updateFlag = UPDATEFLAG_HAS_MOVEMENT_UPDATE;
+```
+
+Self create flags (`Object.cpp:211-212`, `UpdateData.h:30-40`):
+
+- `UPDATEFLAG_HAS_MOVEMENT_UPDATE` (`0x10`) — living movement block
+- `UPDATEFLAG_THIS_IS_YOU` (`0x4000`) — self object
+- `UPDATETYPE_CREATE_OBJECT2` for players (`Object.cpp:220-225`)
+
+Not set for normal player login create:
+
+- `UPDATEFLAG_HAS_POSITION` (`0x40`) — separate stationary-position block
+- `UPDATEFLAG_HAS_TRANSPORT_POSITION`
+- `UPDATEFLAG_HAS_VEHICLE_CREATE`
+- `UPDATEFLAG_HAS_SERVER_TIME`
+
+### Movement Fields In Initial Player Create Block
+
+When `UPDATEFLAG_HAS_MOVEMENT_UPDATE` is set, `BuildMovementUpdate`
+(`Object.cpp:365-458`) serializes:
+
+| Field | Source at login | Expected login value |
+|---|---|---|
+| Mover GUID | `Unit::GetPackGUID()` | player GUID |
+| Movement time | `getMSTime()` | current server ms |
+| Position X/Y/Z/O | `GetPosition*()` / `GetOrientation()` | DB spawn coords |
+| Pitch / spline elevation | `m_movementInfo.pitch`, `.splineElevation` | `0` unless aura/spline |
+| Movement flags (30 bits) | `m_movementInfo.flags` | `0` in Phase 3G probes |
+| Extra movement flags (16 bits) | `m_movementInfo.flags2` | `0` in Phase 3G probes |
+| Transport GUID/block | `m_movementInfo.t_guid` etc. | absent unless on transport |
+| Fall data | falling flags / `fallTime` | absent at normal ground spawn |
+| Has spline | `Unit::IsSplineEnabled()` | `false` at login |
+| Walk speed | `GetSpeed(MOVE_WALK)` | `2.5` (`1.0 × playerBaseMoveSpeed`) |
+| Run speed | `GetSpeed(MOVE_RUN)` | `7.0` |
+| Run-back speed | `GetSpeed(MOVE_RUN_BACK)` | `4.5` |
+| Swim speed | `GetSpeed(MOVE_SWIM)` | `4.722222` |
+| Swim-back speed | `GetSpeed(MOVE_SWIM_BACK)` | `2.5` |
+| Flight speed | `GetSpeed(MOVE_FLIGHT)` | `7.0` |
+| Flight-back speed | `GetSpeed(MOVE_FLIGHT_BACK)` | `4.5` |
+| Turn rate | `GetSpeed(MOVE_TURN_RATE)` | `3.141594` |
+| Pitch rate | `GetSpeed(MOVE_PITCH_RATE)` | `3.14` |
+| Movement forces | count `0` | none |
+
+Important correction vs Phase 3G wording: login does **not** rely on separate
+`SMSG_MOVE_SET_*_SPEED` packets for initial speed delivery. The living movement
+block inside the player `SMSG_UPDATE_OBJECT` create already embeds all nine speed
+floats (`Object.cpp:450-458`).
+
+`MovementInfo::Normalize()` before build only normalizes orientation/pitch and
+clears inconsistent fall-direction bits (`Object.cpp:1734-1743`). It does not
+zero speeds or inject root/disable flags.
+
+Representative login packet order around self create (`worldserver-live.log:4103671-4103676`):
+
+```text
+Send packet [SMSG_MOVE_SET_ACTIVE_MOVER 0x175 (373)]
+Send packet [SMSG_UPDATE_OBJECT 0x26B (619)]
+Send packet [SMSG_UPDATE_OBJECT 0x26B (619)]
+Send packet [SMSG_UPDATE_OBJECT 0x26B (619)]
+...
+Send packet [SMSG_CLIENT_CONTROL_UPDATE 0x7D0 (2000)]
+Send packet [SMSG_MOVE_SET_ACTIVE_MOVER 0x175 (373)]
+```
+
+No root-looking server state was observed in the create window:
+
+- `PROBE_CONTROL_GRANT` at login: `movementFlags=0`, `root=0`, `disableMove=0`
+- zero `SMSG_MOVE_ROOT` / `SMSG_MOVE_UNROOT` lines in full log
+
+### Local vs EyalMK Comparison (Movement-Relevant Only)
+
+| Area | Result |
+|---|---|
+| `Object::BuildMovementUpdate` living block | **Same as reference** — line-by-line diff of `Object.cpp:321-480` vs Eyal `940e0fbc` is empty |
+| `Unit::m_updateFlag = UPDATEFLAG_HAS_MOVEMENT_UPDATE` | **Same as reference** |
+| `Map::SendInitSelf` create/values split | **Same as reference** |
+| Embedded create-block speeds (`GetSpeed(MOVE_*)`) | **Same as reference** |
+| CharacterHandler login packet order | **Same as reference** |
+| Teleport-ack `SMSG_MOVE_UPDATE` + `UpdateSpeed(..., true)` loop | **Same as reference** (`MovementHandler.cpp:171-177`, `:233-234`) |
+| `SendInitialPacketsAfterAddToMap` ending | **Different, probably helpful** — local adds `SetClientControl(this, true)`; Eyal does not |
+| Existing movement-handler / object-update probes | **Local only** — Eyal has no `PROBE_CONTROL_GRANT` or `PROBE_MOVEMENT_HANDLER` |
+
+No suspicious movement-relevant divergence was found in player create/update
+serialization itself.
+
+### Teleport-Ack Path (Code vs Logs)
+
+Code path (`MovementHandler.cpp:168-234`, Eyal matches):
+
+After `SendInitialPacketsAfterAddToMap()` on worldport ack:
+
+1. `SMSG_MOVE_UPDATE` (`0x0439`) with current `m_movementInfo`
+   (`MovementHandler.cpp:171-177`)
+2. `UpdateSpeed(UnitMoveType(i), true)` for `i = 0..8`
+   (`MovementHandler.cpp:233-234`)
+
+`Unit::SetSpeed(..., forced=true)` for players emits these registered opcodes
+(`Opcodes.h:677-685`, `Unit.cpp:14885-14958`):
+
+| Move type | Opcode |
+|---|---|
+| Walk | `SMSG_MOVE_SET_WALK_SPEED` `0x0872` |
+| Run | `SMSG_MOVE_SET_RUN_SPEED` `0x04FD` |
+| Run back | `SMSG_MOVE_SET_RUN_BACK_SPEED` `0x0875` |
+| Swim | `SMSG_MOVE_SET_SWIM_SPEED` `0x0961` |
+| Swim back | `SMSG_MOVE_SET_SWIM_BACK_SPEED` `0x0D72` |
+| Flight | `SMSG_MOVE_SET_FLIGHT_SPEED` `0x08BD` |
+| Flight back | `SMSG_MOVE_SET_FLIGHT_BACK_SPEED` `0x0D0D` |
+| Turn rate | `SMSG_MOVE_SET_TURN_RATE` `0x0DB6` |
+| Pitch rate | `SMSG_MOVE_SET_PITCH_RATE` `0x042D` |
+
+Note: `UpdateSpeed(MOVE_WALK, ...)` returns immediately without sending
+(`Unit.cpp:14630-14631`), so walk forced sync is skipped even on teleport ack.
+
+Log evidence:
+
+```bash
+rg -n "SMSG_MOVE_UPDATE|SMSG_NEW_WORLD|CMSG_MOVE_WORLDPORT" worldserver-live.log
+# no matches
+
+rg -n "SMSG_MOVE_SET_(WALK|RUN|SWIM|FLIGHT|TURN|PITCH)" worldserver-live.log
+# 0 matches
+```
+
+A console `.tele` command appears once (`worldserver-live.log:985225`), but no
+`SMSG_NEW_WORLD`, `CMSG_MOVE_WORLDPORT_ACK`, `SMSG_MOVE_UPDATE`, or
+`SMSG_MOVE_SET_*_SPEED` lines were logged anywhere in the corpus. Teleport-ack
+behavior is therefore **code-supported but log-unproven** in the current sessions.
+
+### Operator Live Test Instructions (If Needed)
+
+Use this only if a fresh teleport-ack capture is required. Cursor should not
+assume it can operate the client.
+
+1. Start stack normally (`runtime/start-all.sh`).
+2. Launch client, login, enter world as `Blizz` in Stormwind.
+3. Before moving, append marker:
+   ```bash
+   echo "=== PHASE3H login baseline ===" >> /home/blizz/Draenor-Core/run-world/worldserver-live.log
+   ```
+4. Open chat, confirm keyboard works, close chat.
+5. Hold `W` for 3 seconds. Note whether position changes visually.
+6. From worldserver console (if available), run:
+   ```text
+   .tele name Blizz Stormwind
+   ```
+   or any short GM teleport that forces a loading screen/worldport if supported.
+7. After reload, append:
+   ```bash
+   echo "=== PHASE3H post-teleport ===" >> /home/blizz/Draenor-Core/run-world/worldserver-live.log
+   ```
+8. Hold `W` for 3 seconds again.
+9. Logout.
+10. Extract:
+    ```bash
+    rg -E "PHASE3H|SMSG_MOVE_UPDATE|SMSG_MOVE_SET_|SMSG_NEW_WORLD|CMSG_MOVE_WORLDPORT|PROBE_MOVEMENT_HANDLER|parsedPos=" \
+      /home/blizz/Draenor-Core/run-world/worldserver-live.log | tail -400
+    ```
+
+Success criteria for Phase 3H live follow-up:
+
+- Post-teleport window shows `SMSG_MOVE_UPDATE` and at least run/swim/flight
+  `SMSG_MOVE_SET_*_SPEED` packets.
+- Compare whether post-teleport `parsedPos` ever differs from `beforePos` when
+  holding `W`.
+
+### Verdict
+
+**C. Teleport-ack sends movement/speed state that login does not; next probe is
+whether post-teleport input produces position deltas.**
+
+Reasoning:
+
+- Initial player create block appears **normal**, not malformed: living movement
+  block present, self flag set, spawn position encoded, movement flags zero,
+  default non-zero speeds embedded inline, no root/disable flags in probes.
+- Login intentionally lacks the teleport-ack extras:
+  - no standalone `SMSG_MOVE_UPDATE`
+  - no separate `SMSG_MOVE_SET_*_SPEED` flush (speeds already embedded in create)
+- EyalMK matches the create/update serialization; local only adds helpful
+  `SetClientControl`.
+- Current logs cannot confirm teleport-ack emissions because no worldport-ack
+  session was captured.
+
+Next probe: operator live test above, or minimal `PHASE3H` trace-only logging on
+`Map::SendInitSelf`, `HandleMoveWorldportAckOpcode`, and `Unit::SetSpeed` if a
+log capture is needed without changing behavior.
