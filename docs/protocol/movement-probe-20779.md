@@ -1550,3 +1550,81 @@ Re-run Phase 3I with operator confirmation before baseline A:
    post-teleport ===`, repeat `W` + jump.
 5. Re-extract with the `rg` command above and compare `CMSG_MOVE_*` and
    `parsedPos=` deltas across both windows.
+
+### Phase 3I Blocked — Current-Session Input Failure (2026-07-07)
+
+Operator reported logged-in character `Blizz` could not move or type in chat.
+Phase 3I movement testing is **blocked** until keyboard/UI input reach the client
+and produce server-visible opcodes again.
+
+**Scope rule:** counts below are limited to the current login session. The
+failure marker is `worldserver-live.log:4642467`
+(`=== PHASE3I current-session-chat-keyboard-failed ===`). No whole-log historical
+counts are used.
+
+#### Marker-window analysis (lines `4642468`–`4642561`, 94 lines after marker)
+
+| Client opcode (requested) | Count after marker |
+|---|---:|
+| `Receive opcode` (any) | **0** |
+| `CMSG_PING` | 0 |
+| `CMSG_TIME_SYNC_RESP` | 0 |
+| `CMSG_CHAT_*` / chat-related | 0 |
+| `CMSG_MOVE_TIME_SKIPPED` | 0 |
+| `CMSG_MOVE_START_*` | 0 |
+| `CMSG_MOVE_HEARTBEAT` | 0 |
+| `CMSG_SET_SELECTION` / interact / attack | 0 |
+| `PROBE_UNKNOWN_CLIENT_OPCODE` | 0 |
+| `PROBE_MOVEMENT_HANDLER` | 0 |
+
+Server outbound traffic **continues normally** after the marker: `SMSG_UPDATE_OBJECT`
+(18), `SMSG_FLIGHT_SPLINE_SYNC` (57), `SMSG_TIME_SYNC_REQUEST` (4), `SMSG_CHAT`
+(3), `SMSG_EMOTE` (1). Control probes still show `Blizz` in-world at
+`[-8833.070,622.778,93.932]` with `root=0`, `disableMove=0`,
+`activeMoverIsPlayer=1`.
+
+#### Login-to-marker context (lines `4639718`–`4642467`, same session)
+
+Before the operator placed the failure marker, the client **had** been
+transmitting:
+
+| Opcode | Count (login → marker) |
+|---|---:|
+| `Receive opcode` (any) | 657 |
+| `CMSG_PING` | 8 |
+| `CMSG_TIME_SYNC_RESP` | 24 |
+| `CMSG_CHAT_UNREGISTER_ALL_ADDON_PREFIXES` | 1 |
+| `CMSG_CHAT_MESSAGE_SAY` | 1 (spawn/login only; none after) |
+| `CMSG_MOVE_TIME_SKIPPED` | 514 |
+| `CMSG_MOVE_HEARTBEAT` | 2 |
+| `CMSG_MOVE_START_*` | 0 |
+| `CMSG_SET_SELECTION` / interact / attack | 0 |
+
+All `CMSG_MOVE_HEARTBEAT` probes in this window had stationary
+`parsedPos=[-8833.070,622.778,93.932,0.677]`. Last client receive before silence:
+line `4642031` (`CMSG_UPDATE_ACCOUNT_DATA`). Then **436 server-only lines** with
+no client opcodes before the failure marker was written.
+
+#### Classification
+
+**Verdict: C. Server/client session is stuck after login.**
+
+Evidence:
+
+- After the failure marker, the server receives **zero** client opcodes (not
+  only missing chat/move — also no `CMSG_PING`, no `CMSG_TIME_SYNC_RESP`).
+- Server-to-client traffic continues; `Blizz` remains in-world server-side.
+- The silence began ~436 log lines **before** the marker, not at marker
+  placement time.
+- Earlier in the same login (before silence), behavior matched partial **B**
+  (connected, one spawn-time `CMSG_CHAT_MESSAGE_SAY`, no `CMSG_MOVE_START_*`,
+  stationary heartbeats) — but the operator-reported failure state is **C**, not
+  A (simple focus loss would still expect background ping/time-sync) and not
+  isolated **B** (all client transmission ceased).
+
+#### Phase 3I status
+
+**No Phase 3I A/B verdict.** Teleport-ack movement probe remains pending.
+Prerequisite: restore client→server opcode flow (confirm `CMSG_PING` and/or
+`CMSG_TIME_SYNC_RESP` resume after operator input attempts), then re-run the
+four-marker Phase 3I runbook.
