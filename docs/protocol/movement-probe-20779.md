@@ -1767,3 +1767,113 @@ SMSG_TRANSFER_PENDING|SMSG_NEW_WORLD|CMSG_WORLD_PORT_RESPONSE|SMSG_MOVE_UPDATE|\
 SMSG_MOVE_SET_|CMSG_MOVE_START|CMSG_CHAT_MESSAGE|PROBE_MOVEMENT_HANDLER|parsedPos=" \
   /home/blizz/Draenor-Core/run-world/worldserver-live.log | tail -120
 ```
+
+## Phase 3J Firestorm Client-State Isolation (2026-07-07)
+
+Date: 2026-07-07
+
+Purpose: test whether a **full WTF + Cache reset** on the Firestorm WoD client
+(with `Interface` kept empty) restores in-game input (Esc menu, Enter/chat,
+W/A-D movement, mouse movement). Login/character-select keyboard already worked;
+in-game input remained dead through Phase 3I.
+
+### Client inventory
+
+| Item | Value |
+|---|---|
+| Client root | `/home/blizz/Projects/draenor-dit/wod/` |
+| Binary | `Wow-64.exe` (strings: **6.2.3.20779**) |
+| `.build.info` | **6.2.3.20886** (metadata mismatch) |
+| NGDP served | **6.2.3.20779** |
+| Launcher | `runtime/launch-client-gamescope.sh` (Gamescope + umu/Proton) |
+| Client type | **Firestorm** (`WTF/Firestorm.wtf`, `SET accounttype "WD"`) |
+
+### Backup and reset performed
+
+| Action | Path / note |
+|---|---|
+| WTF backup | `wod/WTF.backup.phase3j.20260707_230509` (152K) |
+| Cache backup | `wod/Cache.backup.phase3j.20260707_230509` (5.7M) |
+| WTF reset | Deleted; restored **only** `Firestorm.wtf` + `Config.wtf` (portal/realm/graphics); removed saved `accountName` |
+| Cache reset | Deleted; empty dir recreated |
+| Interface | Kept empty (no AddOns) |
+
+**Setup note:** Server stack had to be restarted cleanly before login (stale
+worldserver/auth processes caused disconnects during earlier reset attempts).
+Operator also manually deleted `WTF`/`Cache` once without minimal
+`Firestorm.wtf`, which broke portal login until restored.
+
+### Session scope
+
+Formal `PHASE3J` console markers were not written (watch script timed out during
+server restarts). Analysis window: **`CMSG_PLAYER_LOGIN` through end of session**
+after the clean reset login.
+
+| Anchor | Log line |
+|---|---|
+| Stack restart (clean) | `5313380` |
+| `CMSG_PLAYER_LOGIN` (Phase 3J test login) | `5314112` |
+| Session end (analysis time) | `5318460` (approx.) |
+
+Spawn position after login: **Orgrimmar** map `1`,
+`[1569.970,-4397.410,16.047]` (DB position from prior Phase 3I worldport).
+
+### Opcode counts (login → session end, marker-window scoped)
+
+| Opcode | Count |
+|---|---:|
+| `CMSG_MOVE_START_*` | **0** |
+| `CMSG_CHAT_MESSAGE_SAY` | **0** |
+| `CMSG_CHAT_UNREGISTER_ALL_ADDON_PREFIXES` | 1 |
+| `CMSG_MOVE_HEARTBEAT` | 2 receives (18 probe lines) |
+| `CMSG_MOVE_TIME_SKIPPED` | 2 |
+| `CMSG_PING` | 1 |
+| `CMSG_TIME_SYNC_RESP` | 4 |
+
+All `CMSG_MOVE_HEARTBEAT` probes: **stationary**
+`parsedPos=[1569.970,-4397.410,16.047,0.543]`.
+
+Server control at login: `SetClientControl` + `SMSG_CLIENT_CONTROL_UPDATE` sent;
+`root=0`, `disableMove=0`, `activeMoverIsPlayer=1`.
+
+Post-login unknown client opcodes (same cluster as prior phases):
+`0x05EF`, `0x10E3`, `0x0A32`, `0x09A9`, `0x04CD`, `0x0434`.
+
+### Operator UI report (same session)
+
+Operator confirmed login succeeded but in-game state remained **bugged** (same
+symptoms as pre-reset: broken chat UI, no movement, no usable Enter/W input in
+world). Login-screen and character-select keyboard continued to work.
+
+### Verdict
+
+**B. Reset WTF/Cache does not fix input on Firestorm client; next test is clean
+full 20779 client.**
+
+Evidence:
+
+- Full WTF/Cache wipe + empty `Interface` did **not** produce any
+  `CMSG_MOVE_START_*` or `CMSG_CHAT_MESSAGE_SAY` after world entry.
+- Heartbeats remained **stationary** at spawn coordinates.
+- Server prerequisites unchanged and normal (control grant, not rooted).
+- Fresh WTF regenerated only minimal account cache files
+  (`config-cache.wtf`, `chat-cache.txt`, `cache.md5`) — no restored
+  `layout-local.txt` or SavedVariables from prior sessions.
+- Rules out local layout/cache corruption as the primary blocker.
+
+### Recommended next action
+
+1. Obtain and test a **clean full 6.2.3.20779 retail client** (not Firestorm
+   portal-patched) against the same server stack.
+2. If clean retail also fails → verdict **C** path: server post-world-entry
+   protocol/UI handshake becomes primary suspect.
+3. Keep unknown post-login opcode investigation (`0x05EF` cluster) as a parallel
+   track; do not implement opcode aliases without 20779 reference proof.
+
+Extraction command:
+
+```bash
+rg -n "CMSG_PLAYER_LOGIN|CMSG_MOVE_START|CMSG_CHAT_MESSAGE|CMSG_MOVE_HEARTBEAT|\
+PROBE_MOVEMENT_HANDLER|parsedPos=|PROBE_UNKNOWN_CLIENT_OPCODE|SetClientControl" \
+  /home/blizz/Draenor-Core/run-world/worldserver-live.log | tail -80
+```
