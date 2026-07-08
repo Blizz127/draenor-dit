@@ -1395,3 +1395,158 @@ Reasoning:
 Next probe: operator live test above, or minimal `PHASE3H` trace-only logging on
 `Map::SendInitSelf`, `HandleMoveWorldportAckOpcode`, and `Unit::SetSpeed` if a
 log capture is needed without changing behavior.
+
+## Phase 3I Live Teleport Movement A/B Probe
+
+Date: 2026-07-07
+
+Purpose: determine whether movement input starts working only after a teleport
+ack (`SMSG_NEW_WORLD` → `CMSG_MOVE_WORLDPORT_ACK` → `SMSG_MOVE_UPDATE` +
+`SMSG_MOVE_SET_*_SPEED`), comparing fresh-login baseline against post-teleport
+input on the same character.
+
+### Commits
+
+| Repo | HEAD |
+|---|---|
+| draenor-dit | `3dc59c01e6fb417198a68e99cc63a75d957ffcc6` |
+| Draenor-Core | `3441c31a6ccbe8f24fb7987e18d11465805a0a0c` |
+
+No C++ changes were made for this probe. Existing `PROBE_MOVEMENT_HANDLER` and
+control probes from prior phases were relied on.
+
+### Test Setup
+
+| Item | Value |
+|---|---|
+| Character | `Blizz` |
+| DB map / spawn | map `0`, `(-8833.07, 622.778, 93.9317)` (Elwynn / Northshire area) |
+| Tele destination | Stormwind (`.tele name Blizz Stormwind`) |
+| Log file | `/home/blizz/Draenor-Core/run-world/worldserver-live.log` |
+| Session anchor | line `4629696` `=== PHASE3I SESSION 2026-07-07T22:14:12-05:00 START anchor=4629695 ===` |
+| Input automation | `xdotool` — `W` held 3 s, then `space` (jump), window id `102760469` |
+| Console | `/home/blizz/Draenor-Core/run-world/console.fifo` via `podman exec` (root) |
+
+Precondition check at probe start:
+
+```bash
+mariadb ... -e "SELECT name,online,map,position_x,position_y,position_z FROM characters WHERE name='Blizz';"
+# Blizz  online=0  map=0  (-8833.07, 622.778, 93.9317)
+
+echo "account onlinelist" > console.fifo
+# TC> No online players.
+```
+
+The WoW client was connected (`CMSG_PING` / `SMSG_PONG` only) but `Blizz` never
+entered the world during the 3+ minute wait or the automated input windows.
+
+### Test A — Fresh Login Baseline
+
+Markers: `worldserver-live.log:4629710`–`:4629711`
+
+Procedure:
+
+1. Waited from session anchor through `account onlinelist` confirmation.
+2. Sent `W` (3 s) and `space` via `xdotool` to the WoW window.
+
+Results:
+
+| Check | Result |
+|---|---|
+| Character in world (`online=1`) | **No** — remained `online=0` |
+| Visual movement | **Not observable** — character not in world |
+| `CMSG_MOVE_*` received | **None** between markers |
+| `PROBE_MOVEMENT_HANDLER` / `parsedPos=` | **None** between markers |
+| Position delta | **None** — no in-world player session |
+
+Traffic between markers: `CMSG_PING` / `SMSG_PONG` only.
+
+### Test B — Teleport Ack
+
+Markers: `worldserver-live.log:4629715`–`:4629717`
+
+Procedure:
+
+1. Issued `.tele name Blizz Stormwind` from worldserver console.
+2. Waited 3 s (no loading screen — player offline).
+3. Sent `W` (3 s) and `space` via `xdotool`.
+
+Console response (`worldserver-live.log:4629712`–`:4629714`):
+
+```text
+.tele name Blizz Stormwind
+TC>CLI command under processing...
+You are teleporting Blizz (offline) to Stormwind.
+```
+
+Results:
+
+| Check | Result |
+|---|---|
+| Visual movement | **Not observable** — character not in world |
+| `CMSG_MOVE_*` received | **None** between markers |
+| `PROBE_MOVEMENT_HANDLER` / `parsedPos=` | **None** between markers |
+| `SMSG_NEW_WORLD` | **None** |
+| `CMSG_MOVE_WORLDPORT_ACK` | **None** |
+| `SMSG_MOVE_UPDATE` | **None** |
+| `SMSG_MOVE_SET_*_SPEED` | **None** |
+| Position delta | **None** |
+
+Offline `.tele` updated DB coordinates only; it did **not** exercise the
+worldport-ack code path documented in Phase 3H.
+
+### Test C — Control Comparison
+
+Not run. Test C requires a successful in-world baseline (A) and a successful
+online teleport (B); neither prerequisite was met.
+
+### Packet / Probe Evidence Table
+
+| Window | Log lines | `CMSG_MOVE_*` | `PROBE_MOVEMENT_HANDLER` | Teleport-ack packets | Player online |
+|---|---:|---|---|---|---|
+| Pre-A (anchor → A start) | `4629696`–`4629709` | 0 | 0 | 0 | No |
+| A baseline (W + jump) | `4629710`–`4629711` | 0 | 0 | 0 | No |
+| B post-tele (W + jump) | `4629715`–`4629717` | 0 | 0 | 0 | No |
+
+Extraction command:
+
+```bash
+rg -n "PHASE3I|SMSG_MOVE_UPDATE|SMSG_MOVE_SET_|SMSG_NEW_WORLD|CMSG_MOVE_WORLDPORT|PROBE_MOVEMENT_HANDLER|parsedPos=|Receive opcode \[CMSG_MOVE" \
+  /home/blizz/Draenor-Core/run-world/worldserver-live.log | tail -80
+```
+
+Phase 3I window matches: session markers and `account onlinelist` / offline
+`.tele` console lines only. No movement or teleport-ack traffic.
+
+### Verdict
+
+**Probe inconclusive — character never entered world; teleport-ack path not
+exercised.**
+
+The planned A/B classification could not be applied:
+
+- Baseline A did not capture login movement state because `Blizz` stayed
+  `online=0` and only auth/ping traffic was present.
+- Test B used offline GM `.tele`, which does not emit `SMSG_NEW_WORLD`,
+  `CMSG_MOVE_WORLDPORT_ACK`, `SMSG_MOVE_UPDATE`, or `SMSG_MOVE_SET_*_SPEED`.
+- The partial “no `CMSG_MOVE_*` either window” result is therefore **not**
+  evidence that teleport ack is unrelated to movement unlock; it only shows the
+  probe prerequisites were unmet.
+
+Prior in-world sessions (Phase 3F) remain the best evidence that the client
+*can* emit `CMSG_MOVE_HEARTBEAT` / `CMSG_MOVE_TIME_SKIPPED` at login with
+stationary `parsedPos`; Phase 3I did not reproduce or extend that capture.
+
+### Recommended Next Action
+
+Re-run Phase 3I with operator confirmation before baseline A:
+
+1. Launch client, log in, enter world as `Blizz`.
+2. Verify `account onlinelist` shows the player (or DB `online=1`).
+3. Append `=== PHASE3I A baseline-login ===` marker, wait 3–5 s, hold `W` 3 s,
+   jump once.
+4. While **online**, run `.tele name Blizz Stormwind` (or another short
+   loading-screen GM tele), wait for reload, append `=== PHASE3I B
+   post-teleport ===`, repeat `W` + jump.
+5. Re-extract with the `rg` command above and compare `CMSG_MOVE_*` and
+   `parsedPos=` deltas across both windows.
