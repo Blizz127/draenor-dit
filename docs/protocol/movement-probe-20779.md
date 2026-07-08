@@ -727,26 +727,32 @@ to the client and client-side input/physics acceptance.
 
 ## Phase 3F Client Movement Input Generation
 
-Date: 2026-07-07
+Date: 2026-07-07 (primary run); re-verified 2026-07-08
 
 Purpose: discriminate between local keybinding/WTF state, gamescope/umu input
 capture, direct Wine input capture, and client movement-control state as causes
 for stationary movement packets. No opcode values, opcode aliases, movement
 parsing, dispatch, validation, C++ behavior, or gameplay systems were changed.
 
-### WTF Backup And Clean-Input Profile
+### WTF Backup And Keybinding Inspection
 
-Backup created before any WTF changes:
+Initial backup before cache reset:
 
 ```bash
 /home/blizz/Projects/draenor-dit/wod/WTF.backup.phase3f.20260707_210656
 ```
 
-Binding inspection:
+Re-verification backup before Phase 3F doc commit:
+
+```bash
+/home/blizz/Projects/draenor-dit/wod/WTF.backup.phase3f.20260707_220019
+```
+
+Binding inspection (re-run 2026-07-08):
 
 ```bash
 find /home/blizz/Projects/draenor-dit/wod/WTF -iname "*binding*" -o -iname "*bindings*"
-grep -R "MOVEFORWARD|MOVEBACKWARD|TURNLEFT|TURNRIGHT|STRAFELEFT|STRAFERIGHT|JUMP|TOGGLEAUTORUN" /home/blizz/Projects/draenor-dit/wod/WTF
+grep -R "MOVEFORWARD\|MOVEBACKWARD\|TURNLEFT\|TURNRIGHT\|STRAFELEFT\|STRAFERIGHT\|JUMP\|TOGGLEAUTORUN" /home/blizz/Projects/draenor-dit/wod/WTF
 ```
 
 Result:
@@ -813,10 +819,14 @@ Process evidence:
 - `gamescope -W 1920 -H 1080 -f --force-grab-cursor -- umu-run ...`
 - `Wow-64.exe` was running under gamescope/umu.
 
-Human UI confirmation:
+Keyboard-to-chat confirmation (Test A):
 
-- Keyboard-to-chat confirmation was requested, but the server log cannot prove
-  chat text entry and no separate user confirmation was recorded in this run.
+- Operator opened chat, typed `wasd space arrow test`, confirmed text appeared,
+  then closed chat.
+- Log marker placed after confirmation:
+  `worldserver-live.log:4615571` `=== PHASE3F chat-keyboard-confirmed ===`
+- Conclusion: keyboard input reaches the client UI/chat layer under gamescope/umu.
+  The movement issue is not explained by total keyboard failure to reach the client.
 
 Observed before the timed marker sequence:
 
@@ -910,16 +920,16 @@ marked direct-Wine windows was stationary.
 
 | Question | Result |
 |---|---|
-| Keyboard input reaches chat? | Not independently confirmed in this run; requested but no user confirmation recorded. |
-| Movement keybind files existed? | No binding-named files found. |
-| Movement binding action strings existed in WTF? | No. |
+| Keyboard input reaches chat? | Yes. Confirmed under gamescope/umu; marker at log line `4615571`. |
+| Movement keybind files existed? | No binding-named files found under `WTF`. |
+| Movement binding action strings existed in WTF? | No `MOVEFORWARD` / `MOVEBACKWARD` / turn / strafe / jump / autorun strings found. |
 | Reset bindings/cache changed behavior? | Cache reset did not produce non-stationary coordinates. There were no binding files to reset. |
-| W/S/A/D generated non-stationary MovementInfo? | No non-stationary MovementInfo observed. Test A marked window inconclusive; Test B W produced time-skipped traffic only. |
-| Arrow keys generated non-stationary MovementInfo? | No. Direct-Wine arrow-up produced time-skipped traffic only. |
-| Autorun generated non-stationary MovementInfo? | No. Direct-Wine autorun window contained stationary fall-land handler data. |
-| Both mouse buttons generated non-stationary MovementInfo? | No. Direct-Wine window produced time-skipped traffic and one fall-land receive, no position delta. |
-| Click-to-move generated non-stationary MovementInfo? | No packets observed in the marked click-to-move window. |
-| No-Gamescope changed behavior? | Yes, direct Wine produced a large number of `CMSG_MOVE_TIME_SKIPPED` packets, but still no non-stationary MovementInfo. |
+| W/S/A/D generated non-stationary MovementInfo? | No. Test A marked windows captured zero movement receives. Test B W produced 265 `CMSG_MOVE_TIME_SKIPPED` receives and zero heartbeat/fall-land with position delta. |
+| Arrow keys generated non-stationary MovementInfo? | No. Test A arrow windows captured zero movement receives. Test B arrow-up produced 261 time-skipped receives only. |
+| Autorun generated non-stationary MovementInfo? | No. Test B autorun window had probe activity but no parsed heartbeat/fall-land with changed coordinates. |
+| Both mouse buttons generated non-stationary MovementInfo? | No. Test B window had 32 time-skipped and 1 fall-land receive; fall-land parsed position equaled current position. |
+| Click-to-move generated non-stationary MovementInfo? | No packets observed in either Test A or Test B click-to-move windows. |
+| No-Gamescope changed behavior? | Yes. Direct Wine (`launch-wow-lutris.sh`) generated many `CMSG_MOVE_TIME_SKIPPED` packets during W/arrow-up windows, but still no non-stationary `MovementInfo`. |
 
 ### Conclusion
 
