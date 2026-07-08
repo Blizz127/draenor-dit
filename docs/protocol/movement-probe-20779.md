@@ -1622,9 +1622,148 @@ Evidence:
   A (simple focus loss would still expect background ping/time-sync) and not
   isolated **B** (all client transmission ceased).
 
-#### Phase 3I status
+#### Phase 3I status (superseded)
 
-**No Phase 3I A/B verdict.** Teleport-ack movement probe remains pending.
-Prerequisite: restore client→server opcode flow (confirm `CMSG_PING` and/or
-`CMSG_TIME_SYNC_RESP` resume after operator input attempts), then re-run the
-four-marker Phase 3I runbook.
+Superseded by the console worldport probe below (same date). The session-stuck
+episode at line `4642467` preceded a worldserver restart; the worldport probe
+ran on a fresh login with broken in-game input.
+
+### Phase 3I Console Worldport Probe — Blocked Input (2026-07-07)
+
+Date: 2026-07-07 (evening session)
+
+Purpose: while the in-game input layer was broken (no chat/move opcodes from
+operator keypresses), run a **cross-map console GM teleport** on an **online**
+`Blizz` to test whether worldport-ack delivers the Phase 3H-predicted extra
+movement/speed state and whether that unlocks input afterward.
+
+Procedure variant: modified Phase 3I runbook using worldserver console/FIFO
+instead of in-game GM chat. No WTF reset. No C++ changes.
+
+#### Preconditions and setup notes
+
+- Worldserver had halted (`Halting process...` in log) and was restarted via
+  `runtime/start-all.sh` before this probe.
+- NGDP/DNS/socat were brought back up for client reconnect.
+- Operator confirmed keyboard works for login UI and character select; in-game
+  Enter/W produced no server-visible chat or movement opcodes.
+- `Interface/` had been deleted earlier (addon sanity check); symptoms unchanged.
+
+#### Markers and log anchors
+
+| Marker | Log line | Time (local) |
+|---|---|---|
+| `input-broken-before-console-worldport` | `4821293` | 22:51:29 |
+| `.tele name Blizz Orgrimmar` (console) | `4824472` | ~22:58:09 |
+| `after-console-worldport-loaded` | `4825701` | 22:58:41 |
+| `after-console-worldport-input-test-done` | `4825964` | 22:59:12 |
+
+All counts below are **marker-window scoped only** (no whole-log historical
+counts).
+
+#### Window A — `input-broken-before-console-worldport` → tele
+
+Lines `4821294`–`4824471` (3178 lines). Covers fresh login after server
+restart through operator in-world with broken input.
+
+| Check | Count |
+|---|---:|
+| `CMSG_MOVE_START_*` | **0** |
+| `CMSG_CHAT_MESSAGE_SAY` | **0** |
+| `CMSG_CHAT_UNREGISTER_ALL_ADDON_PREFIXES` | 1 |
+| `CMSG_MOVE_HEARTBEAT` | 2 receives |
+| `parsedPos` (heartbeats) | All stationary `[-8833.070,622.778,93.932,0.677]` |
+
+**Input broken before tele: confirmed.** No operator-driven chat or movement
+opcodes.
+
+#### Window B — tele → `after-console-worldport-loaded`
+
+Lines `4824472`–`4825701` (1230 lines). Console output:
+`You are teleporting Blizz to Orgrimmar.` Operator visually confirmed Orgrimmar
+landing.
+
+| Worldport packet | Seen? |
+|---|---|
+| `SMSG_TRANSFER_PENDING` | **Yes** (1) |
+| `SMSG_NEW_WORLD` | **Yes** (1) |
+| `CMSG_WORLD_PORT_RESPONSE` | **Yes** (1) |
+| `SMSG_MOVE_UPDATE` | **Yes** (1) |
+| `SMSG_MOVE_SET_RUN_BACK_SPEED` | **Yes** (1) |
+| `SMSG_MOVE_SET_SWIM_SPEED` | **Yes** (1) |
+| `SMSG_MOVE_SET_SWIM_BACK_SPEED` | **Yes** (1) |
+| `SMSG_MOVE_SET_FLIGHT_SPEED` | **Yes** (1) |
+| `SMSG_MOVE_SET_FLIGHT_BACK_SPEED` | **Yes** (1) |
+| `SMSG_MOVE_SET_RUN_SPEED` | **No** |
+
+Post-teleport server state: map `1`, position `[1569.970,-4397.410,16.047]`,
+`root=0`, `disableMove=0`, `activeMoverIsPlayer=1`. Control and mover
+re-granted after load.
+
+This exercised the **real worldport-ack path** (not offline DB `.tele` or
+near-teleport `CMSG_MOVE_TELEPORT_ACK`).
+
+#### Window C — `after-console-worldport-loaded` → `input-test-done`
+
+Lines `4825702`–`4825964` (263 lines). Operator tested Enter, W, A/D, and both
+mouse buttons for ~30 s after loading screen finished.
+
+| Check | Count |
+|---|---:|
+| `CMSG_MOVE_START_*` | **0** |
+| `CMSG_MOVE_HEARTBEAT` | **0** |
+| `CMSG_CHAT_MESSAGE_SAY` / chat-related | **0** |
+| `CMSG_TIME_SYNC_RESP` | 3 |
+| `CMSG_PING` | 1 |
+
+**Input remains dead after worldport.** Only background keepalive opcodes; no
+input-driven chat or movement.
+
+#### Required-check summary
+
+| Question | Answer |
+|---|---|
+| Cross-map worldport packets? | **Yes** — full `TRANSFER_PENDING` → `NEW_WORLD` → `WORLD_PORT_RESPONSE` |
+| `SMSG_MOVE_UPDATE` + explicit speeds? | **Yes** — `MOVE_UPDATE` + 5 explicit `SMSG_MOVE_SET_*_SPEED` (no `RUN_SPEED`) |
+| Chat after worldport? | **No** |
+| Movement after worldport? | **No** — no `CMSG_MOVE_START_*`, no non-stationary `MovementInfo` |
+| Input still dead? | **Yes** |
+
+#### Verdict
+
+**B. Worldport-ack sends movement/speed state that login does not; it does not
+unlock the broken in-game input layer.**
+
+Evidence:
+
+- Phase 3H predicted login omits explicit `SMSG_MOVE_UPDATE` / forced speed
+  packets that `HandleMoveWorldportAckOpcode` sends — **confirmed in this live
+  capture**.
+- Operator could not produce chat or move opcodes **before** or **after**
+  worldport despite visual confirmation of a successful Orgrimmar reload.
+- The movement investigation root cause remains **client-side in-game input
+  encoding** (or a client state gate after world entry), not missing server
+  worldport prerequisites.
+
+Phase 3I A/B classification for “does teleport unlock movement?”: **No.** Input
+was broken at login and stayed broken after worldport.
+
+#### Recommended next action
+
+Shift probe focus away from teleport-ack repair. Next investigations:
+
+1. Client in-game input/UI state after `CMSG_LOAD_SCREEN` / control grant (why
+   login UI keyboard works but world Enter/W do not).
+2. Whether unknown post-login opcodes (`0x05EF`, `0x10E3`, `0x0A32`, etc.) need
+   20779 server handlers (separate from movement alias work).
+3. WTF/layout reset only if operator wants a UI-corruption sanity check (not
+   required for this verdict).
+
+Extraction command for marker windows:
+
+```bash
+rg -n "PHASE3I input-broken|PHASE3I after-console|tele name Blizz Orgrimmar|\
+SMSG_TRANSFER_PENDING|SMSG_NEW_WORLD|CMSG_WORLD_PORT_RESPONSE|SMSG_MOVE_UPDATE|\
+SMSG_MOVE_SET_|CMSG_MOVE_START|CMSG_CHAT_MESSAGE|PROBE_MOVEMENT_HANDLER|parsedPos=" \
+  /home/blizz/Draenor-Core/run-world/worldserver-live.log | tail -120
+```
