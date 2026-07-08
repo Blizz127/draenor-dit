@@ -197,3 +197,98 @@ server-side position stayed unchanged.
 The observed login/init unknowns remain ledger entries only. They must not be
 aliased until a manual or native-Windows real-input matrix ties them to specific
 movement actions.
+
+## Phase 3B Manual Matrix
+
+Date: 2026-07-07
+
+Purpose: rerun the movement matrix with human physical input in the focused
+gamescope/WoW window. The earlier `xdotool` run was inconclusive because it
+produced no unknown opcode probes, no movement, and no proof that WoW received
+the synthetic input. The earlier `ydotool` run was invalid because `ydotoold`
+was not running and `/run/user/1000/.ydotool_socket` did not exist.
+
+### Server And Client State
+
+- Branch: `phase3-20779-movement-probe`
+- Draenor-Core commit: `bf3df8a`
+- draenor-dit commit before this report update: `8b746af`
+- Worldserver launch method: FIFO-managed foreground session from
+  `/home/blizz/Draenor-Core/run-world`
+- Worldserver state: stable, one `./worldserver`, `0.0.0.0:8085` listening
+- Client launch path: `runtime/launch-client-gamescope.sh`
+- Client state: `Wow-64.exe` established TCP sessions to `:1119` and `:8085`
+
+Position before the manual matrix:
+
+| Character | Map | X | Y | Z | Online |
+|---|---:|---:|---:|---:|---:|
+| `Blizz` | 0 | -8833.07 | 622.778 | 93.9317 | 1 |
+
+Position after the manual matrix:
+
+| Character | Map | X | Y | Z | Online |
+|---|---:|---:|---:|---:|---:|
+| `Blizz` | 0 | -8833.07 | 622.778 | 93.9317 | 1 |
+
+### Manual Run Markers
+
+- `MANUAL_MATRIX SESSION 2026-07-07T19:37:46-05:00 START`
+- `MANUAL_MATRIX SESSION 2026-07-07T19:38:52-05:00 END`
+
+The matrix was driven by desktop notifications and physical user input. No
+`xdotool` or `ydotool` input was used as evidence for this run.
+
+### Marker-delimited Packet Result
+
+Within the manual matrix markers, no `PROBE_UNKNOWN_CLIENT_OPCODE` lines and no
+`UNKNOWN OPCODE` lines appeared.
+
+Known client packets observed inside the marker-delimited window:
+
+| Packet | Opcode | Size | Count | Notes |
+|---|---:|---:|---:|---|
+| `CMSG_PING` | `0x0828` | 8 | 3 | background keepalive |
+| `CMSG_TIME_SYNC_RESP` | `0x119D` | 8 | 5 | background time sync |
+| `CMSG_UITIME_REQUEST` | `0x0567` | 0 | 2 | UI/background request |
+| `CMSG_QUEST_GIVER_STATUS_QUERY` | `0x001A` | 10 | 2 | non-movement NPC/object status query; appeared before the explicit click marker, so action timing is ambiguous |
+
+### Action Table
+
+| Physical action | Unknown opcode | Size | First 32 payload bytes | Count | Repeats while held? | Release-only? | Position change |
+|---|---|---:|---|---:|---|---|---|
+| idle 10s | none observed | n/a | n/a | 0 | no | no | no |
+| W down 2s | none observed | n/a | n/a | 0 | no | no | no |
+| W release | none observed | n/a | n/a | 0 | no | no | no |
+| S down 2s | none observed | n/a | n/a | 0 | no | no | no |
+| S release | none observed | n/a | n/a | 0 | no | no | no |
+| A/D turn | none observed | n/a | n/a | 0 | no | no | no |
+| right-click camera/facing | none observed | n/a | n/a | 0 | no | no | no |
+| jump | none observed | n/a | n/a | 0 | no | no | no |
+| click NPC/object | none observed | n/a | n/a | 0 | no | no | no |
+| ESC menu | none observed | n/a | n/a | 0 | no | no | no |
+
+### Click And ESC Behavior
+
+The log did not show an unknown opcode for click or ESC. Two known
+`CMSG_QUEST_GIVER_STATUS_QUERY` packets appeared in the manual matrix window
+before the explicit click marker, which means the client/server session can
+still produce known UI/NPC-related client packets during the manual run. The
+timing is not clean enough to assign those packets to the click marker.
+
+No separate ESC-specific unknown packet was observed.
+
+### Conclusion
+
+The Phase 3B manual matrix still does not justify any 20779 movement aliases.
+No unknown opcode repeated while W/S/A/D was held, no release-only unknown opcode
+appeared, and the stored player position did not change.
+
+This run is stronger than the automated `xdotool` run because the client session
+did produce normal known packets during the manual window. However, it still did
+not produce movement-shaped unknown packets. The next useful discriminator is a
+native Windows/manual matrix with visual confirmation recorded alongside the log,
+or a focused check of whether the client is receiving/granting movement input at
+all after `SetClientControl(this, true)`.
+
+Proposed 20779 alias candidates from Phase 3B: none.
