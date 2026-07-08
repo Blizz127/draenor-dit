@@ -292,3 +292,151 @@ or a focused check of whether the client is receiving/granting movement input at
 all after `SetClientControl(this, true)`.
 
 Proposed 20779 alias candidates from Phase 3B: none.
+
+## Phase 3C Client Control / Active Mover Verification
+
+Date: 2026-07-07
+
+Purpose: verify whether the server grants active mover and client-control state
+to a 6.2.3.20779 client before considering any movement opcode aliases. No
+opcode values, dispatch behavior, movement handlers, or `MovementInfo` parsing
+were changed.
+
+### Files Changed
+
+- `/home/blizz/Draenor-Core/src/server/game/Entities/Player/Player.cpp`
+  - Added logging-only `PROBE_CONTROL_GRANT` instrumentation.
+- `docs/protocol/movement-probe-20779.md`
+  - Added this Phase 3C report.
+
+### Instrumentation Locations
+
+Current local locations in `Player.cpp`:
+
+| Location | Purpose |
+|---|---|
+| `27986-28018` | `LogControlGrantProbe(...)` helper |
+| `28154` | login call-site probe immediately before `SetMover(this)` in `SendInitialPacketsBeforeAddToMap()` |
+| `28370` | login call-site probe immediately before `SetClientControl(this, true)` in `SendInitialPacketsAfterAddToMap()` |
+| `29677` | direct `SMSG_CLIENT_CONTROL_UPDATE` send probe in `Player::SetClientControl()` after packet construction and before send |
+| `32146` | `SMSG_TIME_SYNC_REQUEST` probe in `Player::SendTimeSync()` after packet construction and before send |
+| `33164` | direct `SMSG_MOVE_SET_ACTIVE_MOVER` send probe in `Player::SetMover()` after packet construction and before send |
+
+Search found additional `SetClientControl(...)` and `SetMover(...)` callers in
+scripts/unit control paths, but the actual packet construction/sends for these
+two opcodes are centralized in `Player::SetClientControl()` and
+`Player::SetMover()`.
+
+### Build And Launch Result
+
+Build command:
+
+```bash
+podman exec draenor-devbox bash -lc 'cd /home/blizz/Draenor-Core/build && cmake --build . --target worldserver -j2'
+```
+
+Result: success. The rebuild reached `[100%] Built target worldserver`.
+
+Worldserver launch method:
+
+```bash
+podman exec draenor-devbox bash -lc 'cd /home/blizz/Draenor-Core/run-world && rm -f console.fifo && mkfifo console.fifo && exec 9<>console.fifo && exec ./worldserver < console.fifo >> worldserver-live.log 2>&1'
+```
+
+Runtime verification:
+
+- One actual `./worldserver` process was running.
+- `0.0.0.0:8085` was listening.
+- The log reached `World initialized in 0 minutes 17 seconds`.
+- No immediate `Halting process` followed initialization.
+
+### Login Result
+
+- Client launch path: `runtime/launch-client-gamescope.sh`
+- `Wow-64.exe` established TCP sessions to `100.111.220.11:1119` and
+  `100.111.220.11:8085`.
+- `Blizz` entered world and the character DB row showed `online=1`.
+
+Character state at extraction:
+
+| Character | Map | X | Y | Z | Orientation | Online |
+|---|---:|---:|---:|---:|---:|---:|
+| `Blizz` | 0 | -8833.07 | 622.778 | 93.9317 | 0.6771 | 1 |
+
+### Control Packet Sequence
+
+Latest-run log anchor: latest `World initialized` line was
+`worldserver-live.log:4103321`.
+
+| Order | Function | Opcode name | Opcode value | Payload | In world? | Active mover is player? |
+|---:|---|---|---:|---:|---:|---:|
+| 1 | `Player::SendInitialPacketsBeforeAddToMap` | `CALL_Player_SetMover_this` | `0x0175` / 373 | 0 | 0 | 1 |
+| 2 | `Player::SetMover` | `SMSG_MOVE_SET_ACTIVE_MOVER` | `0x0175` / 373 | 5 | 0 | 1 |
+| 3 | `Player::SendTimeSync` | `SMSG_TIME_SYNC_REQUEST` | `0x0101` / 257 | 4 | 1 | 1 |
+| 4 | `Player::SendInitialPacketsAfterAddToMap` | `CALL_Player_SetClientControl_this_true` | `0x07D0` / 2000 | 0 | 1 | 1 |
+| 5 | `Player::SetClientControl` | `SMSG_CLIENT_CONTROL_UPDATE` | `0x07D0` / 2000 | 6 | 1 | 1 |
+| 6 | `Player::SetMover` | `SMSG_MOVE_SET_ACTIVE_MOVER` | `0x0175` / 373 | 5 | 1 | 1 |
+
+The first active-mover send happens before map add (`inWorld=0`). Time sync,
+the explicit client-control call, the client-control packet send, and the
+second active-mover send happen after map add (`inWorld=1`).
+
+### Player State Flags
+
+All control probes for `Blizz` reported:
+
+- `guidLow=1`
+- `targetGuidLow=1`
+- `moverGuidLow=1`
+- `activeMoverIsPlayer=1`
+- `movementFlags=0x00000000`
+- `unitFlags=0x00000008`
+- `unitFlags2=0x00000800`
+- `alive=1`
+- `root=0`
+- `stunned=0`
+- `deadState=0`
+- `controlled=0`
+- `lostControl=0`
+- `notMove=0`
+- `cannotTurn=0`
+- `serverControlled=0`
+- `disableMove=0`
+
+No obvious server-side root, stun, death, control-loss, no-move, cannot-turn,
+server-controlled, or disable-move blocker was present in this probe.
+
+### Time Sync And Unknowns
+
+Time sync continued after the control packet sequence. The latest extracted run
+contained `CMSG_TIME_SYNC_RESP 0x119D (4509)` responses after
+`SMSG_TIME_SYNC_REQUEST 0x0101 (257)`.
+
+Unknown client opcodes in this login/init slice:
+
+| Opcode | Decimal | Size | Count |
+|---:|---:|---:|---:|
+| `0x006C` | 108 | 0 | 1 |
+| `0x0434` | 1076 | 1 | 1 |
+| `0x04CD` | 1229 | 4 | 1 |
+| `0x05EF` | 1519 | 5 | 3 |
+| `0x09A9` | 2473 | 0 | 1 |
+| `0x0A32` | 2610 | 0 | 1 |
+| `0x10E3` | 4323 | 0 | 1 |
+
+These remain login/init observations only. This phase did not run a new
+movement matrix and does not justify movement aliases.
+
+### Conclusion
+
+`SetMover(this)` ran and sent `SMSG_MOVE_SET_ACTIVE_MOVER 0x0175 (373)`.
+`SetClientControl(this, true)` ran and sent
+`SMSG_CLIENT_CONTROL_UPDATE 0x07D0 (2000)`. The active mover GUID matched the
+player GUID, the packets were sent both before and after map add as shown
+above, and time sync still worked afterward.
+
+Phase 3C therefore does not support the hypothesis that the server entirely
+failed to send active mover or client-control state. The remaining likely
+directions are to verify whether the 20779 client accepts the exact
+active-mover/client-control packet encoding, and to keep input delivery as a
+separate hypothesis. No 20779 alias candidates are proposed from Phase 3C.
