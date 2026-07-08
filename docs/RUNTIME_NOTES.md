@@ -22,7 +22,9 @@ host command is required.
 | worldserver | 8085 | World socket listener. |
 | NGDP HTTP | 80 | Local content/config bootstrap endpoint. |
 
-Tailscale IP for remote/client-side routing tests: `100.111.220.11`.
+Default Tailscale IP for remote/client-side routing tests: `100.111.220.11`.
+Runtime helpers that need this value should read `DRAENOR_SERVER_IP` and fall
+back to that local default.
 
 ## Client Approach
 

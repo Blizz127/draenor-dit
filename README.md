@@ -37,5 +37,7 @@ Do not patch movement opcodes until action-correlated evidence exists.
   controlled movement test matrix for build 20779.
 - [docs/RUNTIME_NOTES.md](docs/RUNTIME_NOTES.md) - local runtime topology,
   ports, client patching notes, and process-management warnings.
+- [docs/protocol-compatibility-20779.md](docs/protocol-compatibility-20779.md) -
+  protocol compatibility ledger for connect/login/enter-world/render/movement work.
 - [BUILD.md](BUILD.md) - historical build notes and toolchain fixes.
 - [PHASE1-REPORT.md](PHASE1-REPORT.md) - earlier build/runtime baseline report.

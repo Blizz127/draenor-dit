@@ -11,9 +11,17 @@ WOPCore-6.2.3-FirestormWOD/
 runtime/db/
 
 # volatile runtime logs / captures
-runtime/ngdp/http.log
-runtime/ngdp/socat.log
-runtime/ngdp/world-dump.log
+runtime/ngdp/*.log
+
+# generated Python cache
+**/__pycache__/
+*.pyc
+*.pyo
+
+# local/private Battle.net auth module cache artifacts
+runtime/bnet-auth-modules/
+runtime/bnet-auth-modules.zip
+runtime/Cache/
 
 # editor / stray
 .vscode/
