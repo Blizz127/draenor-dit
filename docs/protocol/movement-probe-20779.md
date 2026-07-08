@@ -724,3 +724,216 @@ not justify opcode aliases or movement dispatch changes. The next smallest
 probe should inspect why the 20779 client is not producing changed coordinates
 after control grant, with attention to movement speed/control/root state sent
 to the client and client-side input/physics acceptance.
+
+## Phase 3F Client Movement Input Generation
+
+Date: 2026-07-07
+
+Purpose: discriminate between local keybinding/WTF state, gamescope/umu input
+capture, direct Wine input capture, and client movement-control state as causes
+for stationary movement packets. No opcode values, opcode aliases, movement
+parsing, dispatch, validation, C++ behavior, or gameplay systems were changed.
+
+### WTF Backup And Clean-Input Profile
+
+Backup created before any WTF changes:
+
+```bash
+/home/blizz/Projects/draenor-dit/wod/WTF.backup.phase3f.20260707_210656
+```
+
+Binding inspection:
+
+```bash
+find /home/blizz/Projects/draenor-dit/wod/WTF -iname "*binding*" -o -iname "*bindings*"
+grep -R "MOVEFORWARD|MOVEBACKWARD|TURNLEFT|TURNRIGHT|STRAFELEFT|STRAFERIGHT|JUMP|TOGGLEAUTORUN" /home/blizz/Projects/draenor-dit/wod/WTF
+```
+
+Result:
+
+- No binding-named files were found under `WTF`.
+- No movement binding action strings were found before or after the cache reset.
+- `WTF/Config.wtf` and `WTF/Firestorm.wtf` were preserved. They contain the
+  local portal/realm settings, including `100.111.220.11`.
+
+Clean-input reset action:
+
+- Moved only `*cache*` files out of `WTF`.
+- Did not remove the whole `WTF` directory.
+- Did not touch client binaries, patched client files, `Config.wtf`, or
+  `Firestorm.wtf`.
+
+Moved files were preserved locally under:
+
+```bash
+/home/blizz/Projects/draenor-dit/wod/WTF.phase3f.moved.20260707_210656
+```
+
+Moved file list:
+
+```text
+Account/5/Banshee Realm/Blizy/cache.md5
+Account/5/Banshee Realm/Blizy/chat-cache.txt
+Account/5/Banshee Realm/Blizy/config-cache.wtf
+Account/5/Banshee Realm/Blizz/cache.md5
+Account/5/Banshee Realm/Blizz/chat-cache.old
+Account/5/Banshee Realm/Blizz/chat-cache.txt
+Account/5/Banshee Realm/Blizz/config-cache.old
+Account/5/Banshee Realm/Blizz/config-cache.wtf
+Account/5/Banshee Realm/Cfbfs/cache.md5
+Account/5/Banshee Realm/Cfbfs/chat-cache.txt
+Account/5/Banshee Realm/Cfbfs/config-cache.wtf
+Account/5/Banshee Realm/Test/cache.md5
+Account/5/Banshee Realm/Test/chat-cache.txt
+Account/5/Banshee Realm/Test/config-cache.wtf
+Account/5/cache.md5
+Account/5/config-cache.old
+Account/5/config-cache.wtf
+```
+
+### Server Baseline
+
+Worldserver was restarted cleanly after the WTF backup/reset:
+
+- Latest fresh-run anchor: `worldserver-live.log:4610081`.
+- The log reached `World initialized in 0 minutes 7 seconds`.
+- One `./worldserver` process was running.
+- `0.0.0.0:8085` was listening.
+
+### Test A: Gamescope / umu
+
+Launch method:
+
+```bash
+./runtime/launch-client-gamescope.sh
+```
+
+Process evidence:
+
+- `gamescope -W 1920 -H 1080 -f --force-grab-cursor -- umu-run ...`
+- `Wow-64.exe` was running under gamescope/umu.
+
+Human UI confirmation:
+
+- Keyboard-to-chat confirmation was requested, but the server log cannot prove
+  chat text entry and no separate user confirmation was recorded in this run.
+
+Observed before the timed marker sequence:
+
+- The client entered world.
+- Known movement packets still appeared after the cache reset.
+- Representative parsed movement remained stationary:
+
+```text
+CMSG_MOVE_HEARTBEAT 0x1512 size 69
+beforePos=[-8833.070,622.778,93.932,0.677]
+parsedPos=[-8833.070,622.778,93.932,0.677]
+afterPos=[-8833.070,622.778,93.932,0.677]
+```
+
+Timed marker sequence:
+
+| Marker | Log line |
+|---|---:|
+| `PHASE3F input W` | `4615653` |
+| `PHASE3F input S` | `4615657` |
+| `PHASE3F input A-D-turn` | `4615661` |
+| `PHASE3F input arrow-up` | `4615665` |
+| `PHASE3F input arrow-down` | `4615751` |
+| `PHASE3F input space` | `4615753` |
+| `PHASE3F input autorun` | `4615757` |
+| `PHASE3F input both-mouse-buttons` | `4615761` |
+| `PHASE3F input right-click-turn` | `4615846` |
+| `PHASE3F input click-to-move` | `4615850` |
+
+Extraction from the marked Test A window found no `CMSG_MOVE_*` receive lines
+and no `PROBE_MOVEMENT_HANDLER` lines. This makes the per-input Test A marker
+window inconclusive. It does not override the earlier same-run observation that
+gamescope/umu still produced stationary recognized movement packets after the
+cache reset.
+
+### Test B: Direct Wine, No Gamescope
+
+Launch method:
+
+```bash
+./runtime/launch-wow-lutris.sh
+```
+
+This path uses a direct Wine window and does not use gamescope or umu. The
+script also sets Wine DirectInput/raw-input registry keys before launching.
+
+Process evidence:
+
+- `Wow-64.exe` was running under the direct Wine prefix.
+- The selected character in this run was `Cfbfs`, not `Blizz`.
+- Character state in probes:
+  - player GUID: `3`
+  - map: `1`
+  - position: `[10311.300,832.463,1326.410,5.696]`
+
+Timed marker sequence:
+
+| Marker | Log line |
+|---|---:|
+| `PHASE3F TEST B input W` | `4625440` |
+| `PHASE3F TEST B input arrow-up` | `4626022` |
+| `PHASE3F TEST B input autorun` | `4626559` |
+| `PHASE3F TEST B input both-mouse-buttons` | `4626573` |
+| `PHASE3F TEST B input click-to-move` | `4626640` |
+
+Packet receive counts in marked windows, using exact `Receive opcode` markers:
+
+| Input window | `CMSG_MOVE_TIME_SKIPPED` | `CMSG_MOVE_HEARTBEAT` | `CMSG_MOVE_FALL_LAND` | Non-stationary parsed `MovementInfo` |
+|---|---:|---:|---:|---|
+| W | 265 | 0 | 0 | none observed |
+| arrow-up | 261 | 0 | 0 | none observed |
+| autorun | 0 | 0 | 0 receive lines in window; 2 time-skipped probes and 1 fall-land handler pass landed there | none observed |
+| both mouse buttons | 32 | 0 | 1 | none observed |
+| click-to-move | 0 | 0 | 0 | none observed |
+
+Representative direct-Wine parsed movement:
+
+```text
+CMSG_MOVE_FALL_LAND 0x149D size 48
+beforePos=[10311.300,832.463,1326.410,5.696]
+parsedPos=[10311.300,832.463,1326.410,5.696]
+afterPos=[10311.300,832.463,1326.410,5.696]
+```
+
+The direct-Wine path changed the packet mix: the marked W and arrow-up windows
+produced many `CMSG_MOVE_TIME_SKIPPED` packets, but no `CMSG_MOVE_HEARTBEAT`
+with changed coordinates. The only normal parsed MovementInfo packet in the
+marked direct-Wine windows was stationary.
+
+### Phase 3F Matrix Result
+
+| Question | Result |
+|---|---|
+| Keyboard input reaches chat? | Not independently confirmed in this run; requested but no user confirmation recorded. |
+| Movement keybind files existed? | No binding-named files found. |
+| Movement binding action strings existed in WTF? | No. |
+| Reset bindings/cache changed behavior? | Cache reset did not produce non-stationary coordinates. There were no binding files to reset. |
+| W/S/A/D generated non-stationary MovementInfo? | No non-stationary MovementInfo observed. Test A marked window inconclusive; Test B W produced time-skipped traffic only. |
+| Arrow keys generated non-stationary MovementInfo? | No. Direct-Wine arrow-up produced time-skipped traffic only. |
+| Autorun generated non-stationary MovementInfo? | No. Direct-Wine autorun window contained stationary fall-land handler data. |
+| Both mouse buttons generated non-stationary MovementInfo? | No. Direct-Wine window produced time-skipped traffic and one fall-land receive, no position delta. |
+| Click-to-move generated non-stationary MovementInfo? | No packets observed in the marked click-to-move window. |
+| No-Gamescope changed behavior? | Yes, direct Wine produced a large number of `CMSG_MOVE_TIME_SKIPPED` packets, but still no non-stationary MovementInfo. |
+
+### Conclusion
+
+Phase 3F does not support a simple bad local keybinding file as the cause:
+there were no binding files or movement binding strings under `WTF`, and moving
+cache files aside did not cause the client to send position deltas.
+
+Phase 3F also does not support gamescope as the only discriminator. Direct Wine
+changed the packet mix and generated many movement-time-skipped packets, but it
+still did not produce non-stationary `MovementInfo` in the marked windows.
+
+The current evidence remains: recognized movement traffic can reach the server,
+the handler accepts stationary coordinates, and alternate input paths still do
+not produce changed coordinates. The next smallest non-fix probe should inspect
+client-side movement-control prerequisites sent by the server, especially
+speed/update-field state and any client-visible movement disable/root/spline
+state, without changing opcodes or movement handling.
