@@ -947,3 +947,203 @@ not produce changed coordinates. The next smallest non-fix probe should inspect
 client-side movement-control prerequisites sent by the server, especially
 speed/update-field state and any client-visible movement disable/root/spline
 state, without changing opcodes or movement handling.
+
+## Phase 3G Server Movement Prerequisites After Login
+
+Date: 2026-07-08
+
+Purpose: inspect server-sent movement prerequisites at login/spawn/teleport without
+changing opcodes, dispatch, parsing, validation, handler behavior, speed formulas,
+root/spline/control logic, or packet serialization.
+
+Scope: static analysis plus existing Phase 3D control-grant probes already present
+in the local Core worktree. No new C++ was added for Phase 3G.
+
+### Repository State At Start
+
+Docs repo (`draenor-dit`): clean on `phase3-20779-movement-probe`.
+
+Core repo (`/home/blizz/Draenor-Core`): dirty with unrelated build/script/runtime
+changes from prior phases. Phase 3G did not modify Core files.
+
+Existing trace helpers reused (already in local Core, not committed separately here):
+
+| Helper | File | Purpose |
+|---|---|---|
+| `LogControlGrantProbe` | `Player.cpp:27986-28017` | Logs server-side mover/control/state at grant sites |
+| `LogOutgoingControlPacketProbe` | `Player.cpp:28020-28063` | Logs raw bytes for control/time-sync packets |
+
+### Login / Spawn Paths Inspected
+
+Initial character login (`CharacterHandler.cpp`):
+
+1. `pCurrChar->SendInitialPacketsBeforeAddToMap()` (`CharacterHandler.cpp:1147`)
+2. `pCurrChar->GetMap()->AddPlayerToMap(pCurrChar)` (`CharacterHandler.cpp:1180`)
+3. `pCurrChar->SendInitialPacketsAfterAddToMap()` (`CharacterHandler.cpp:1206`)
+
+Inside those functions (`Player.cpp`):
+
+| Step | Function | Movement-relevant action |
+|---|---|---|
+| Before map add | `SendInitialPacketsBeforeAddToMap:28200-28201` | `SetMover(this)` → `SMSG_MOVE_SET_ACTIVE_MOVER` |
+| Map add | `Map::AddPlayerToMap:467-492` | `player->AddToWorld()`, `SendInitSelf()` → `SMSG_UPDATE_OBJECT` create |
+| After map add | `SendInitialPacketsAfterAddToMap:28271-28272` | `ResetTimeSync()`, `SendTimeSync()` → `SMSG_TIME_SYNC_REQUEST` |
+| After map add | `SendInitialPacketsAfterAddToMap:28274` | `CastSpell(this, 836, true)` login effect |
+| After map add | `SendInitialPacketsAfterAddToMap:28294-28301` | clear movement forces; root only if stun/root auras present |
+| After map add | `SendInitialPacketsAfterAddToMap:28416-28417` | local probe addition: `SetClientControl(this, true)` |
+
+Teleport/worldport ack (`MovementHandler.cpp`):
+
+1. `SendInitialPacketsBeforeAddToMap()` (`MovementHandler.cpp:129`)
+2. `AddPlayerToMap()` (`MovementHandler.cpp:130`)
+3. `SendInitialPacketsAfterAddToMap()` (`MovementHandler.cpp:168`)
+4. `SMSG_MOVE_UPDATE` with current `m_movementInfo` (`MovementHandler.cpp:171-177`)
+5. `UpdateSpeed(UnitMoveType(i), true)` for `i = 0..8` (`MovementHandler.cpp:233-234`)
+
+Important structural difference: the teleport-ack path sends an explicit
+`SMSG_MOVE_UPDATE` and forced speed updates. The initial CharacterHandler login
+path does neither.
+
+Reference check: `EyalMK/Draenor-Core` `940e0fbc` matches this split. Eyal does
+not call `UpdateSpeed` or send `SMSG_MOVE_UPDATE` on initial login either; it
+only runs the speed loop on teleport ack (`MovementHandler.cpp:190`).
+
+Local-only addition vs Eyal: `SetClientControl(this, true)` at the end of
+`SendInitialPacketsAfterAddToMap`. Eyal ends after mount/account packets without
+this call. This local addition should enable client input rather than disable it.
+
+### Control / Mover / Time Sync Evidence
+
+Representative login trace for `Blizz` (`worldserver-live.log` lines `4610325`,
+`4610424`, `4610425-4610426`, `4271808`, `4271810`):
+
+```text
+PROBE_CONTROL_GRANT: function=Player::SendInitialPacketsBeforeAddToMap opcode=CALL_Player_SetMover_this
+  targetGuidLow=1 moverGuidLow=1 activeMoverIsPlayer=1
+  movementFlags=0x00000000 unitFlags=0x00000008 unitFlags2=0x00000800
+  root=0 stunned=0 deadState=0 controlled=0 lostControl=0 notMove=0 cannotTurn=0
+  serverControlled=0 disableMove=0
+
+PROBE_CONTROL_GRANT: function=Player::SendInitialPacketsAfterAddToMap opcode=CALL_Player_SetClientControl_this_true
+  (same state flags as above)
+
+PROBE_OUTGOING_CONTROL_PACKET: opcode=SMSG_CLIENT_CONTROL_UPDATE payload bytes=[01 A0 01 04 08 80]
+PROBE_OUTGOING_CONTROL_PACKET: opcode=SMSG_MOVE_SET_ACTIVE_MOVER payload bytes=[01 A0 01 04 08]
+PROBE_OUTGOING_CONTROL_PACKET: opcode=SMSG_TIME_SYNC_REQUEST payload bytes=[00 00 00 00] then [01 00 00 00] ...
+```
+
+Interpretation:
+
+| Prerequisite | Observed | Notes |
+|---|---|---|
+| Active mover | Yes | `SMSG_MOVE_SET_ACTIVE_MOVER` sent before and after map add; mover GUID = player GUID |
+| Client control enabled | Yes | `SMSG_CLIENT_CONTROL_UPDATE` sent with trailing control bit set (`0x80`) |
+| Wrong mover attached | No | `targetGuidLow=1`, `moverGuidLow=1`, `activeMoverIsPlayer=1` |
+| Time sync | Yes | `SMSG_TIME_SYNC_REQUEST` counter starts at 0 and increments |
+| Root / unroot packets | No root sent | zero `SMSG_MOVE_ROOT` / `SMSG_MOVE_UNROOT` lines in full log |
+| Server-side root/stun/disable | No | all probe flags `0` except normal unit flags |
+| `UNIT_FIELD_FLAGS` | `0x00000008` | `UNIT_FLAG_PVP_ATTACKABLE` only |
+| `UNIT_FIELD_FLAGS_2` | `0x00000800` | `UNIT_FLAG2_REGENERATE_POWER` only |
+| Movement flags at grant | `0x00000000` | no root/hover/flying flags on server mover state |
+
+Same pattern repeated for `Cfbfs` at map 1 (`worldserver-live.log:4623555-4623565`).
+
+Login packet order around spawn (`worldserver-live.log:4103609-4103670` excerpt):
+
+```text
+SMSG_LOGIN_VERIFY_WORLD
+SMSG_LOGIN_SET_TIME_SPEED
+SMSG_MOVE_SET_ACTIVE_MOVER
+SMSG_UPDATE_OBJECT (create self)
+SMSG_TIME_SYNC_REQUEST
+SMSG_CLIENT_CONTROL_UPDATE
+SMSG_MOVE_SET_ACTIVE_MOVER
+```
+
+No `SMSG_MOVE_ROOT`, `SMSG_MOVE_UNROOT`, or `SMSG_MOVE_SET_*_SPEED` observed in
+the login window or anywhere else in `worldserver-live.log`.
+
+### Speed State Analysis
+
+Server-side defaults (`Unit.cpp:276`, `Unit.cpp:81-92`):
+
+- `m_speed_rate[i] = 1.0f` for all move types at construction.
+- `playerBaseMoveSpeed` defaults: walk `2.5`, run `7.0`, run-back `4.5`, swim
+  `4.722222`, turn `3.141594`, flight `7.0`, etc.
+
+`Unit::SetSpeed` (`Unit.cpp:14764-14961`) sends explicit `SMSG_MOVE_SET_*_SPEED`
+packets to players only when called while `IsInWorld()` is true and the rate
+changes. `UpdateAllStats()` during DB load happens before the player is in world,
+so load-time stat refresh does not emit speed packets.
+
+Log search result:
+
+```bash
+rg -n "SMSG_MOVE_SET_(WALK|RUN|SWIM|FLIGHT|TURN|PITCH)" worldserver-live.log | wc -l
+# 0
+```
+
+The only `SMSG_MOVE_SET_*` packets in the entire log are
+`SMSG_MOVE_SET_ACTIVE_MOVER` (45 occurrences).
+
+This means the 20779 test sessions never emitted explicit walk/run/swim/flight
+speed packets to the client. That matches the Eyal login path: initial login does
+not call `UpdateSpeed`; only teleport ack does. No teleport-ack speed flush was
+observed in the current log corpus.
+
+Server-side speed rates are therefore default/non-zero, but the client was never
+explicitly synchronized with `SMSG_MOVE_SET_*_SPEED` during these sessions.
+
+### Spline / Teleport / Fall State At Spawn
+
+| Packet / state | Initial login | Teleport ack path |
+|---|---|---|
+| `SMSG_MOVE_UPDATE` | Not sent by CharacterHandler | Sent at `MovementHandler.cpp:171-177` |
+| `SMSG_NEW_WORLD` | Not part of initial login sequence inspected | Used in map transfer flows |
+| `SMSG_FLIGHT_SPLINE_SYNC` | Observed from nearby units after spawn, not player mover probes | Same possible |
+| Forced speed resync | Not on initial login | `UpdateSpeed(..., true)` for all 9 move types |
+
+No evidence that the player spawn itself starts a server spline or root state.
+Probe state at control grant shows `movementFlags=0` and `root=0`.
+
+### Phase 3G Checklist
+
+| Question | Result |
+|---|---|
+| Accidentally rooted on server? | No probe or packet evidence |
+| Control disabled on server? | No; `SMSG_CLIENT_CONTROL_UPDATE` sent with control bit on |
+| Wrong mover / not player mover? | No; mover GUID equals player GUID |
+| Zero/invalid server speed rates? | No; defaults remain `1.0` rate × normal base speeds |
+| Explicit speed packets sent? | No; none in full log |
+| Client-visible disable/root flags in update fields? | No blocking flags observed (`disableMove=0`, `UNIT_FLAG_DISABLE_MOVE` unset) |
+| Missing control packet vs Eyal? | Local sends extra `SetClientControl`; Eyal does not |
+| Version-mismatched prerequisite opcode observed? | No evidence in probes; opcodes match committed 20726-labeled table |
+
+### Verdict
+
+**Server sent normal movement prerequisites for control, mover assignment, time
+sync, and unit movement-state flags.** The player is not server-rooted, not
+control-blocked, not on the wrong mover, and not assigned zero server-side speed
+rates in the probed login/spawn sequences.
+
+**Suspicious but reference-aligned gap:** the client never received explicit
+`SMSG_MOVE_SET_*_SPEED` packets during these sessions, and initial login does not
+perform the post-spawn `SMSG_MOVE_UPDATE` + forced `UpdateSpeed` sequence that
+teleport ack uses. This is consistent with Eyal's login path, so it is not yet
+proven as a 20779-specific bug, but it remains the main server-side difference
+between first login and later teleport ack.
+
+**Not enough evidence to blame missing speed packets alone** for stationary
+client `MovementInfo`, because Phase 3E/3F already show the client does emit
+movement traffic after control grant; it just reports unchanged coordinates.
+
+### Next Probe (Phase 3H, no fix yet)
+
+1. Add trace-only `PHASE3G`-labeled logging at the login vs teleport-ack boundary
+   to confirm whether a real teleport ack would emit `SMSG_MOVE_SET_RUN_SPEED` and
+   `SMSG_MOVE_UPDATE` on this build.
+2. Decode the player `SMSG_UPDATE_OBJECT` create block for movement-related update
+   fields and compare against an Eyal login capture.
+3. If login and teleport-ack sequences diverge in ways 20779 expects, test a
+   logging-only post-login `UpdateSpeed`/`SMSG_MOVE_UPDATE` discriminator without
+   committing behavioral changes until evidence supports it.
