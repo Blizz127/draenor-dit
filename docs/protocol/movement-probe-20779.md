@@ -584,3 +584,143 @@ generates movement packets" as the current explanation. The next discriminator
 should stay evidence-based: inspect how the known movement handlers process or
 reject these received packets and why the stored/player-visible position does
 not advance. No opcode aliases are justified from Phase 3D-A.
+
+## Phase 3E Movement Handler Trace
+
+Date: 2026-07-07
+
+Purpose: trace the normal movement-handler path for recognized movement
+packets. This phase does not change movement behavior, patch opcodes, implement
+aliases, bypass validation, or manually apply position.
+
+### Files Changed
+
+- `/home/blizz/Draenor-Core/src/server/game/Handlers/MovementHandler.cpp`
+  - Added logging-only `PROBE_MOVEMENT_HANDLER` instrumentation around the
+    existing `WorldSession::HandleMovementOpcodes` path.
+- `/home/blizz/Draenor-Core/src/server/game/Handlers/MiscHandler.cpp`
+  - Added logging-only `PROBE_MOVEMENT_HANDLER` instrumentation to
+    `WorldSession::HandleMoveTimeSkippedOpcode`.
+- `docs/protocol/movement-probe-20779.md`
+  - Added this Phase 3E report.
+
+### Instrumentation Location
+
+Current local locations:
+
+| File | Location | Purpose |
+|---|---:|---|
+| `MovementHandler.cpp` | `30-72` | `LogMovementHandlerProbe(...)` helper |
+| `MovementHandler.cpp` | `302-340` | handler entry, pre-parse state, and normal `ReadMovementInfo` result |
+| `MovementHandler.cpp` | `320-379` | existing early returns for teleport, ignore count, mover GUID mismatch, invalid position, and transport validation |
+| `MovementHandler.cpp` | `459-494` | anti-cheat call, movement update send, `m_movementInfo` assignment, and `UpdatePosition` boundary |
+| `MovementHandler.cpp` | `548`, `564` | under-map special-case return and normal completion |
+| `MiscHandler.cpp` | `1305-1353` | `CMSG_MOVE_TIME_SKIPPED` parsed mover GUID/time with unchanged TODO behavior |
+
+The probe reads state already available in the normal handler path. It does not
+consume packet bytes twice, add alternate parsing, mutate dispatch, suppress
+validation, or change position assignment.
+
+### Build And Runtime Result
+
+Build command:
+
+```bash
+podman exec draenor-devbox bash -lc 'cd /home/blizz/Draenor-Core/build && cmake --build . --target worldserver -j2'
+```
+
+Result: success. The rebuild compiled `MiscHandler.cpp` and
+`MovementHandler.cpp`, linked `worldserver`, and reached
+`[100%] Built target worldserver`.
+
+Worldserver launch method:
+
+```bash
+podman exec -d draenor-devbox bash -lc 'cd /home/blizz/Draenor-Core/run-world && rm -f console.fifo && mkfifo console.fifo && exec 9<>console.fifo && exec ./worldserver < console.fifo >> worldserver-live.log 2>&1'
+```
+
+Runtime verification:
+
+- One actual `./worldserver` process was running.
+- `0.0.0.0:8085` was listening.
+- The log reached `World initialized in 0 minutes 7 seconds`.
+- No immediate `Halting process` followed initialization.
+
+Latest-run log anchor: latest `World initialized` line was
+`worldserver-live.log:4439852`.
+
+### Movement Packets Observed
+
+From the latest rebuilt run after `worldserver-live.log:4439852`:
+
+| Packet | Opcode | Size | Receive count | Handler probe count |
+|---|---:|---:|---:|---:|
+| `CMSG_MOVE_HEARTBEAT` | `0x1512` / 5394 | 69 | 2 | 2 full handler passes |
+| `CMSG_MOVE_FALL_LAND` | `0x149D` / 5277 | 48 | 1 | 1 full handler pass |
+| `CMSG_MOVE_TIME_SKIPPED` | `0x18B9` / 6329 | 9 | 1 | 1 time-skipped TODO probe |
+
+A clean repeat marker was added at `worldserver-live.log:4445338`; no movement
+packets appeared after that marker during the short poll window. The usable
+handler trace above is still from the current rebuilt Phase 3E run, but it
+landed before the manual marker, so the action boundary is not as clean as the
+probe boundary.
+
+### Handler Path Result
+
+For `CMSG_MOVE_HEARTBEAT` and `CMSG_MOVE_FALL_LAND`:
+
+| Check | Result |
+|---|---|
+| Handler ran | Yes |
+| `ReadMovementInfo` parsed | Yes |
+| Parsed mover GUID | `1` |
+| Active mover GUID | `1` |
+| Player GUID | `1` |
+| Map / inWorld | `0` / `1` |
+| Transport GUID | `0` |
+| Root/stunned/dead/serverControlled/disableMove/notMove/cannotTurn/lostControl | all `0` |
+| Anti-cheat call returned to handler | Yes, `after_anticheat` logged |
+| Early return | None observed |
+| `UpdatePosition` reached | Yes |
+| Player position after handler | unchanged |
+
+Representative heartbeat trace:
+
+```text
+opcode=CMSG_MOVE_HEARTBEAT 0x1512 packetSize=69
+beforePos=[-8833.070,622.778,93.932,0.677]
+parsedPos=[-8833.070,622.778,93.932,0.677]
+afterPos=[-8833.070,622.778,93.932,0.677]
+movementFlags=0x00000800 extraMovementFlags=0x0000/0x0800
+```
+
+Representative fall-land trace:
+
+```text
+opcode=CMSG_MOVE_FALL_LAND 0x149D packetSize=48
+beforePos=[-8833.070,622.778,93.932,0.677]
+parsedPos=[-8833.070,622.778,93.932,0.677]
+afterPos=[-8833.070,622.778,93.932,0.677]
+movementFlags=0x00000000 extraMovementFlags=0x0800
+```
+
+`CMSG_MOVE_TIME_SKIPPED` parsed mover GUID `1` and `timeSkipped=192`, but the
+local handler remains a TODO and does not update position. That behavior was
+only logged, not changed.
+
+### Conclusion
+
+The normal movement handler is not rejecting the observed recognized movement
+packets. For heartbeat and fall-land, mover GUID validation passes, no
+root/stun/dead/control-state blocker is present, no transport/coordinate
+early-return is observed, anti-cheat returns to the handler, and
+`UpdatePosition` is reached.
+
+The reason position does not advance in this trace is that the parsed
+`MovementInfo` position is already identical to the current player position.
+The server is applying the position the client reports, but the client is
+reporting stationary coordinates for these packets. Phase 3E therefore does
+not justify opcode aliases or movement dispatch changes. The next smallest
+probe should inspect why the 20779 client is not producing changed coordinates
+after control grant, with attention to movement speed/control/root state sent
+to the client and client-side input/physics acceptance.
