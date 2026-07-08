@@ -440,3 +440,147 @@ failed to send active mover or client-control state. The remaining likely
 directions are to verify whether the 20779 client accepts the exact
 active-mover/client-control packet encoding, and to keep input delivery as a
 separate hypothesis. No 20779 alias candidates are proposed from Phase 3C.
+
+## Phase 3D-A Outgoing Control Packet Bytes
+
+Date: 2026-07-07
+
+Purpose: log the exact outgoing payload bytes for the server-to-client control
+packets involved in the active-mover/client-control sequence. No delayed resend,
+opcode changes, aliases, dispatch changes, movement handler changes, or
+`MovementInfo` parsing changes were made.
+
+### Files Changed
+
+- `/home/blizz/Draenor-Core/src/server/game/Entities/Player/Player.cpp`
+  - Added logging-only `PROBE_OUTGOING_CONTROL_PACKET` instrumentation.
+- `docs/protocol/movement-probe-20779.md`
+  - Added this Phase 3D-A report.
+
+### Instrumentation Location
+
+Current local locations in `Player.cpp`:
+
+| Location | Purpose |
+|---|---|
+| `28020-28064` | `LogOutgoingControlPacketProbe(...)` helper |
+| `29724` | `SMSG_CLIENT_CONTROL_UPDATE` payload dump immediately before `GetSession()->SendPacket(&l_Data)` |
+| `32194` | `SMSG_TIME_SYNC_REQUEST` payload dump immediately before `GetSession()->SendPacket(&data)` |
+| `33213` | `SMSG_MOVE_SET_ACTIVE_MOVER` payload dump immediately before `GetSession()->SendPacket(&data)` |
+
+The helper filters internally to only:
+
+- `SMSG_MOVE_SET_ACTIVE_MOVER`
+- `SMSG_CLIENT_CONTROL_UPDATE`
+- `SMSG_TIME_SYNC_REQUEST`
+
+It reads `WorldPacket::size()` and `WorldPacket::contents()` only. It does not
+mutate packet read/write positions, consume bytes, alter payload encoding, or
+log unrelated traffic.
+
+### Build And Runtime Result
+
+Build command:
+
+```bash
+podman exec draenor-devbox bash -lc 'cd /home/blizz/Draenor-Core/build && cmake --build . --target worldserver -j2'
+```
+
+Result: success. The rebuild compiled `Player.cpp` and reached
+`[100%] Built target worldserver`.
+
+Worldserver launch method:
+
+```bash
+podman exec draenor-devbox bash -lc 'cd /home/blizz/Draenor-Core/run-world && rm -f console.fifo && mkfifo console.fifo && exec 9<>console.fifo && exec ./worldserver < console.fifo >> worldserver-live.log 2>&1'
+```
+
+Runtime verification:
+
+- One actual `./worldserver` process was running.
+- `0.0.0.0:8085` was listening.
+- The log reached `World initialized in 0 minutes 13 seconds`.
+- No immediate `Halting process` followed initialization.
+- `Blizz` entered world and the character DB row showed `online=1`.
+
+Latest-run log anchor: latest `World initialized` line was
+`worldserver-live.log:4271461`.
+
+### Outgoing Packet Bytes
+
+| Packet | Opcode | Payload size | First payload bytes | Count in latest run | Notes |
+|---|---:|---:|---|---:|---|
+| `SMSG_MOVE_SET_ACTIVE_MOVER` | `0x0175` / 373 | 5 | `01 A0 01 04 08` | 2 | sent once before map add and once after `SetClientControl(this, true)` |
+| `SMSG_CLIENT_CONTROL_UPDATE` | `0x07D0` / 2000 | 6 | `01 A0 01 04 08 80` | 1 | sent after map add |
+| `SMSG_TIME_SYNC_REQUEST` | `0x0101` / 257 | 4 | `00 00 00 00`, then incrementing little-endian counters | 15 | observed sequence included `00 00 00 00` through `0D 00 00 00` |
+
+The active-mover and client-control payloads used the same packed player GUID
+prefix:
+
+```text
+01 A0 01 04 08
+```
+
+The client-control payload adds one final bit-flushed byte:
+
+```text
+80
+```
+
+### Time Sync
+
+`CMSG_TIME_SYNC_RESP 0x119D (4509)` continued arriving after the outgoing
+`SMSG_TIME_SYNC_REQUEST` packets. The latest-run receive count at extraction was
+12.
+
+### Manual Input Check
+
+After world render, the focused client was given a short manual input check:
+ESC/menu once, W/S/A/D, and jump once. The latest run produced known movement
+CMSG receive lines:
+
+| Packet | Opcode | Size | Count |
+|---|---:|---:|---:|
+| `CMSG_MOVE_TIME_SKIPPED` | `0x18B9` / 6329 | 9 | 2 |
+| `CMSG_MOVE_HEARTBEAT` | `0x1512` / 5394 | 69 | 2 |
+| `CMSG_MOVE_FALL_LAND` | `0x149D` / 5277 | 48 | 1 |
+
+The character DB row still showed the stored position unchanged at extraction:
+
+| Character | Map | X | Y | Z | Orientation | Online |
+|---|---:|---:|---:|---:|---:|---:|
+| `Blizz` | 0 | -8833.07 | 622.778 | 93.9317 | 0.6771 | 1 |
+
+### Unknown Opcodes
+
+Unknown probes in the latest run remained the known login/init-style ledger:
+
+| Opcode | Decimal | Size | First payload bytes | Count |
+|---:|---:|---:|---|---:|
+| `0x006C` | 108 | 0 | empty | 1 |
+| `0x0A32` | 2610 | 0 | empty | 1 |
+| `0x10E3` | 4323 | 0 | empty | 1 |
+| `0x05EF` | 1519 | 5 | `00 16 00 00 00` | 1 |
+| `0x05EF` | 1519 | 5 | `00 00 00 00 00` | 1 |
+| `0x0434` | 1076 | 1 | `00` | 1 |
+| `0x04CD` | 1229 | 4 | `00 00 00 00` | 1 |
+| `0x09A9` | 2473 | 0 | empty | 1 |
+| `0x05EF` | 1519 | 5 | `00 1F 00 00 00` | 1 |
+
+No unknown movement-shaped opcode was identified in this phase. The movement
+traffic observed after manual input was known `CMSG_MOVE_*` traffic, not an
+unknown opcode requiring an alias.
+
+### Conclusion
+
+The outgoing control packet byte probe confirms the exact payloads sent for the
+active-mover/client-control/time-sync sequence. Time sync still round-trips
+after the byte probe, so the logging did not break the session.
+
+Most importantly, after manual input the 20779 client did emit known movement
+CMSGs (`CMSG_MOVE_TIME_SKIPPED`, `CMSG_MOVE_HEARTBEAT`, and
+`CMSG_MOVE_FALL_LAND`). That means Phase 3D-A does not support "client never
+generates movement packets" as the current explanation. The next discriminator
+should stay evidence-based: inspect how the known movement handlers process or
+reject these received packets and why the stored/player-visible position does
+not advance. No opcode aliases are justified from Phase 3D-A.
