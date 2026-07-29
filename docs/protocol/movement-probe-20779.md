@@ -1912,22 +1912,25 @@ movement handlers are broken in general.
 
 ### Supported client baseline (use this going forward)
 
+Full inventory (sizes, Wine ProgramData, sanitized Config hashes, client vs
+repack-server separation): **`docs/client/20779-enUS-baseline.md`** (Phase 3J-B).
+
 | Item | Value |
 |---|---|
 | Build | **6.2.3.20779** (`VersionsName=6.2.3.20779`, `BuildId=20779`) |
 | Locale | **enUS** (`Login … locale=enUS`; WTF `textLocale` / `audioLocale` = `enUS`) |
-| Binary (preferred) | Community **`Wow-64-Patched.exe`** or **`Wow-64-Patched-Offline.exe`** (not Firestorm `Wow-64.exe`) |
+| Binary (validated) | **`Wow-64-Patched-Offline.exe`** (also `Wow-64-Patched.exe`; not Firestorm `Wow-64.exe`) |
 | SHA256 `Wow-64-Patched.exe` | `8a67fba97eccc87585ae22833d28ff87d15fd745a71f5d143ced81892ec1175f` |
 | SHA256 `Wow-64-Patched-Offline.exe` | `042c7c24af68ca16bfa3010a2ee9e1355c7686bee6b5ffb2442164749fa8e50d` |
-| Exe version string | `<Version> 6.2.3.20779` / `WorldOfWarcraft/6.2.3.20779` |
+| PE `FileVersion` | `6.2.3.20779` |
 | Client directory (canonical pack) | `/home/blizz/Games/World of Warcraft 6.2.3.20779 enUS/` |
-| Workspace copy used this session | `wod/` in this repo (same patched binaries by SHA256; CASC `data/` present; do not commit client binaries) |
-| Mirror copy | `/var/home/blizz/Downloads/World of Warcraft 6.2.3.20779 enUS/` |
-| Portal / realm (session) | `SET portal "localhost"`; realm `Banshee Realm` on `wod/` |
+| Workspace copy (validated session) | `wod/` — launch via `runtime/launch-client-gamescope.sh` |
+| Wine prefix | `/var/home/blizz/Games/umu/umu-default/pfx` |
+| Portal | **Confirmed** `SET portal "localhost"` |
 | Explicitly unsupported as reference | Firestorm-branded `Wow-64.exe` / Firestorm portal-locked client |
 
 Do not publish or commit copyrighted client files. Record paths, build, locale,
-and hashes only.
+and hashes only. Do not import any pack-bundled private-server stack.
 
 ### Markers and analysis scope
 
@@ -2021,3 +2024,49 @@ rg -n "PHASE3J clean-english|CMSG_CHAT_MESSAGE_SAY|CMSG_MOVE_START_FORWARD|CMSG_
 CMSG_MOVE_START_TURN|PROBE_MOVEMENT_HANDLER|parsedPos=" \
   /home/blizz/Draenor-Core/run-world/worldserver-live.log | awk -F: '$1+0>=25550' | head -120
 ```
+
+## Phase 3J-B Working 20779 English Client Baseline (2026-07-29)
+
+Date: 2026-07-29
+
+Purpose: **preserve** the working clean English 6.2.3.20779 client as the
+supported local baseline (inventory + docs only). No C++ / opcode changes. No
+import of any pack-bundled private-server binaries, databases, or credentials.
+No redistribution of copyrighted client files.
+
+### Verdict carried forward
+
+- Clean English client: **working** login, chat, movement, NPC interaction
+  (Phase 3J).
+- Firestorm findings: **client-specific**; not a general server failure.
+- This enUS 20779 pack + `Wow-64-Patched*.exe` is the **supported test baseline**.
+
+### Baseline pointer
+
+Canonical inventory document:
+
+**[`docs/client/20779-enUS-baseline.md`](../client/20779-enUS-baseline.md)**
+
+Summary:
+
+| Field | Value |
+|---|---|
+| Canonical dir | `/home/blizz/Games/World of Warcraft 6.2.3.20779 enUS/` (~29 GiB, 408 files) |
+| Active `wod/` | `/home/blizz/Projects/draenor-dit/wod/` (validated session; same exe hashes) |
+| Exe | `Wow-64-Patched-Offline.exe` (live) / `Wow-64-Patched.exe` |
+| Build / locale | 6.2.3.20779 / enUS |
+| Portal | `SET portal "localhost"` confirmed |
+| Wine prefix | `/var/home/blizz/Games/umu/umu-default/pfx` |
+| ProgramData | `$WINEPREFIX/drive_c/ProgramData/Blizzard Entertainment/Battle.net/Cache` (`.auth` modules) |
+| Launch | `bash runtime/launch-client-gamescope.sh` |
+
+### Client vs pack server material
+
+| Keep / use | Do not use |
+|---|---|
+| Patched WoW exe + CASC `data/` + enUS WTF + ProgramData `.auth` zip/cache | Any leaked/repacked **server** stack (worldserver/authserver, SQL dumps, pack credentials) |
+| Draenor-Core under `/home/blizz/Draenor-Core/` | Pointing core config at pack-bundled DB/binaries |
+| This baseline for future protocol/content tests | Firestorm `Wow-64.exe` as reference |
+
+Local multi-part `.7z` listing for this pack is a **client tree**; still treat
+any future sibling server dump from the same community source as out of scope.
