@@ -1630,6 +1630,11 @@ ran on a fresh login with broken in-game input.
 
 ### Phase 3I Console Worldport Probe — Blocked Input (2026-07-07)
 
+> **Client scope:** This probe used the **Firestorm** client with dead in-game
+> input. Worldport did not unlock Firestorm input. That does **not** imply the
+> clean English client lacks movement; see
+> [Phase 3J Clean English Client Validation](#phase-3j-clean-english-client-validation-2026-07-29).
+
 Date: 2026-07-07 (evening session)
 
 Purpose: while the in-game input layer was broken (no chat/move opcodes from
@@ -1770,6 +1775,12 @@ SMSG_MOVE_SET_|CMSG_MOVE_START|CMSG_CHAT_MESSAGE|PROBE_MOVEMENT_HANDLER|parsedPo
 
 ## Phase 3J Firestorm Client-State Isolation (2026-07-07)
 
+> **Client scope (do not generalize):** This section records the **Firestorm**
+> client only (`wod/Wow-64.exe` / `WTF/Firestorm.wtf`). Its dead in-game input
+> and stationary-only heartbeat conclusions are **Firestorm-client-specific**.
+> They are **not** a general server movement failure. Superseding clean-client
+> validation: [Phase 3J Clean English Client Validation](#phase-3j-clean-english-client-validation-2026-07-29).
+
 Date: 2026-07-07
 
 Purpose: test whether a **full WTF + Cache reset** on the Firestorm WoD client
@@ -1876,4 +1887,137 @@ Extraction command:
 rg -n "CMSG_PLAYER_LOGIN|CMSG_MOVE_START|CMSG_CHAT_MESSAGE|CMSG_MOVE_HEARTBEAT|\
 PROBE_MOVEMENT_HANDLER|parsedPos=|PROBE_UNKNOWN_CLIENT_OPCODE|SetClientControl" \
   /home/blizz/Draenor-Core/run-world/worldserver-live.log | tail -80
+```
+
+## Phase 3J Clean English Client Validation (2026-07-29)
+
+Date: 2026-07-29
+
+Purpose: determine whether the Firestorm client was the primary blocker for
+dead in-game chat/movement by validating a **clean English WoD 6.2.3.20779**
+client against the same server stack. No C++ / opcode / movement / serialization
+changes. Docs only.
+
+### Contrast with prior Firestorm results
+
+| Client | Login / char-select keyboard | In-game chat | In-game movement | Notes |
+|---|---|---|---|---|
+| Firestorm (`Wow-64.exe` + `Firestorm.wtf`) | Works | Dead (no `CMSG_CHAT_MESSAGE_SAY` from operator tests) | Dead (no `CMSG_MOVE_START_*`; stationary heartbeats) | WTF/Cache reset (earlier Phase 3J) did not repair; Phase 3I full worldport + explicit move/speed refresh did not repair |
+| Clean English (`Wow-64-Patched*.exe`, enUS) | Works | Works | Works | This section |
+
+Earlier Phase 3F–3I and Firestorm Phase 3J “dead input / stationary-only”
+observations remain valid **as Firestorm-client evidence**. They must not be
+treated as proof that server login movement prerequisites, worldport-ack, or
+movement handlers are broken in general.
+
+### Supported client baseline (use this going forward)
+
+| Item | Value |
+|---|---|
+| Build | **6.2.3.20779** (`VersionsName=6.2.3.20779`, `BuildId=20779`) |
+| Locale | **enUS** (`Login … locale=enUS`; WTF `textLocale` / `audioLocale` = `enUS`) |
+| Binary (preferred) | Community **`Wow-64-Patched.exe`** or **`Wow-64-Patched-Offline.exe`** (not Firestorm `Wow-64.exe`) |
+| SHA256 `Wow-64-Patched.exe` | `8a67fba97eccc87585ae22833d28ff87d15fd745a71f5d143ced81892ec1175f` |
+| SHA256 `Wow-64-Patched-Offline.exe` | `042c7c24af68ca16bfa3010a2ee9e1355c7686bee6b5ffb2442164749fa8e50d` |
+| Exe version string | `<Version> 6.2.3.20779` / `WorldOfWarcraft/6.2.3.20779` |
+| Client directory (canonical pack) | `/home/blizz/Games/World of Warcraft 6.2.3.20779 enUS/` |
+| Workspace copy used this session | `wod/` in this repo (same patched binaries by SHA256; CASC `data/` present; do not commit client binaries) |
+| Mirror copy | `/var/home/blizz/Downloads/World of Warcraft 6.2.3.20779 enUS/` |
+| Portal / realm (session) | `SET portal "localhost"`; realm `Banshee Realm` on `wod/` |
+| Explicitly unsupported as reference | Firestorm-branded `Wow-64.exe` / Firestorm portal-locked client |
+
+Do not publish or commit copyrighted client files. Record paths, build, locale,
+and hashes only.
+
+### Markers and analysis scope
+
+| Marker | Log line (`worldserver-live.log`) |
+|---|---|
+| `CMSG_PLAYER_LOGIN` (session) | `22797` |
+| `=== PHASE3J clean-english-client-login-complete ===` | `25550` |
+| `=== PHASE3J clean-english-client-input-test-done ===` | `25551` |
+
+Note: the two PHASE3J markers were written on consecutive lines (empty formal
+window). Operator-confirmed input tests and matching server evidence landed
+**after** `input-test-done`. Counts below use the **post-marker current session**
+(`25552` → analysis time), with operator confirmation that chat and movement
+worked in-game. Prior empty-window-only analysis was recorded as insufficient
+until this closeout.
+
+### Opcode / MovementInfo evidence (post-marker session)
+
+Player `Blizz`, accountId `5`, map `1`.
+
+| Check | Count / result |
+|---|---|
+| `CMSG_CHAT_MESSAGE_SAY` (`0x3BE`) | **≥3** receives (e.g. lines `26497`, `26503`, `26597`) |
+| `CMSG_MOVE_START_FORWARD` | **10** receives / probe starts |
+| `CMSG_MOVE_STOP` | **10** receives / probe starts |
+| `CMSG_MOVE_START_TURN_LEFT` | **17** |
+| `CMSG_MOVE_START_TURN_RIGHT` | **16** |
+| `CMSG_MOVE_STOP_TURN` | **33** |
+| `CMSG_MOVE_START_STRAFE_*` | 0 (not required; A/D observed as turn in this run) |
+| `CMSG_MOVE_JUMP` | 0 (not observed in this capture) |
+| `CMSG_MOVE_HEARTBEAT` | **16+** receives |
+| `CMSG_MOVE_TIME_SKIPPED` | 0 |
+| Non-stationary `PROBE_MOVEMENT_HANDLER` `after_parse` (`movementFlags != 0`) | **86** |
+| Interaction | `CMSG_SET_SELECTION`, `CMSG_GOSSIP_HELLO`, `CMSG_QUESTGIVER_HELLO`, `CMSG_CLOSE_INTERACTION` present |
+
+Position delta (first → late movement complete):
+
+- Before: `[10322.208,827.134,1326.373,5.458]` (map `1`)
+- After: `[10326.717,833.891,1326.349,2.907]` (map `1`)
+
+Example early forward parse (line `25643`): `movementFlags=0x00000011`,
+`parsedPos` yaw changed vs before; later `CMSG_MOVE_STOP` completes at
+`[10326.062,826.939,1326.372,…]` — server accepted non-stationary movement and
+updated coordinates.
+
+### Operator confirmation
+
+- Clean English client logs in successfully.
+- In-game chat works (`/say` and related UI).
+- In-game movement works (W / turn / mouse-driven motion).
+- Contrasts with Firestorm: login UI keyboard worked there, but world chat and
+  movement input stayed dead even after worldport (Phase 3I) and WTF/Cache reset
+  (Firestorm Phase 3J).
+
+### Final verdict
+
+**A. Clean English client has working in-game input and movement.**
+
+1. The **Firestorm client was incompatible or otherwise unsuitable** as the
+   20779 reference client for movement/input validation.
+2. **Server movement prerequisites, initial movement state, worldport path, and
+   movement handling are functional** with this clean English client (chat and
+   move opcodes received and applied; coordinates change).
+3. Earlier dead-input and stationary-only conclusions apply to the **Firestorm
+   client** and must **not** be treated as a general server failure.
+4. **Stop** the movement-protocol “server handshake broken” investigation path
+   that assumed Firestorm symptoms were universal. Establish this clean English
+   client as the **supported baseline** for future tests.
+5. Unknown post-login opcode cleanup and unrelated content work remain separate
+   tracks; do not implement movement opcode aliases without 20779 reference
+   proof.
+
+### Instrumentation disposition (not removed this phase)
+
+Existing probe logging remains in Draenor-Core (not modified here):
+
+| Marker | Location |
+|---|---|
+| `PROBE_UNKNOWN_CLIENT_OPCODE` | `WorldSocket.cpp` (encrypted client path) |
+| `PROBE_MOVEMENT_HANDLER` | `MovementHandler.cpp`, `MiscHandler.cpp` (`TIME_SKIPPED`) |
+| `PROBE_CONTROL_GRANT` / `PROBE_OUTGOING_CONTROL_PACKET` | `Player.cpp` |
+
+**Recommendation:** keep temporarily for regression against the new baseline and
+any remaining Firestorm comparison notes; remove in a later dedicated cleanup
+phase once probe noise is no longer needed. **Do not remove in Phase 3J.**
+
+Extraction command:
+
+```bash
+rg -n "PHASE3J clean-english|CMSG_CHAT_MESSAGE_SAY|CMSG_MOVE_START_FORWARD|CMSG_MOVE_STOP|\
+CMSG_MOVE_START_TURN|PROBE_MOVEMENT_HANDLER|parsedPos=" \
+  /home/blizz/Draenor-Core/run-world/worldserver-live.log | awk -F: '$1+0>=25550' | head -120
 ```
